@@ -51,7 +51,6 @@ private val TABS = listOf(
 private fun RootScaffold() {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
-    val currentRoute = backStack?.destination?.route
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
