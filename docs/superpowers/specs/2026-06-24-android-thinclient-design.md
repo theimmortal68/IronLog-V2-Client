@@ -20,12 +20,12 @@ The app must install alongside the existing IronLog v1 app (`com.jauschua.ironlo
 
 ## 2. Constraints
 
-- **Server endpoints available** (v0.1 is upper-bounded by this list):
-  - `GET /movements` → `List[MovementDto]`
-  - `GET /movements/{id}` → `MovementDto`
-  - `GET /phase-policy/{phase}` → `PhasePolicyDto`
-  - `GET /bands/usable` → `List[BandPairDto]`
-  - `POST /autoregulate/next-set` → `NextSetResponse`
+- **Server endpoints available** (v0.1 is upper-bounded by this list; v0.1 consumes the four marked **used**):
+  - `GET /movements` → `List[MovementDto]` **(used)**
+  - `GET /movements/{id}` → `MovementDto` **(used)**
+  - `GET /phase-policy/{phase}` → `PhasePolicyDto` (not consumed in v0.1 — no screen shows it; see §10)
+  - `GET /bands/usable` → `List[BandPairDto]` **(used)**
+  - `POST /autoregulate/next-set` → `NextSetResponse` **(used)**
 - No authentication on the server (LAN-trusted).
 - No session-write endpoints, no sync, no generation endpoints.
 - Cleartext HTTP only (server is plain `uvicorn`; HTTPS would require a reverse proxy not yet deployed).
@@ -82,7 +82,7 @@ IronLog-V2-Client/
 │           ├── data/api/ApiClient.kt                 # Ktor + OkHttp engine config
 │           ├── data/api/dto/Models.kt                # @Serializable DTOs + enums
 │           ├── data/api/ApiError.kt                  # error sealed interface
-│           ├── data/repo/LibraryRepo.kt              # movements / movement(id) / phasePolicy / usableBands
+│           ├── data/repo/LibraryRepo.kt              # movements / movement(id) / usableBands
 │           ├── data/repo/AutoregRepo.kt              # nextSet(...)
 │           ├── ui/MainActivity.kt                    # NavHost + bottom navigation scaffold
 │           ├── ui/UiState.kt                         # shared sealed interface
@@ -267,17 +267,7 @@ All DTOs use **snake_case** field names so the FastAPI/SQLModel JSON deserialize
     val usable: Boolean = true,
 )
 
-@Serializable data class PhasePolicyDto(
-    val id: Int,
-    val phase: Phase,
-    val default_objective: Objective,
-    val rpe_band_low: Double,
-    val rpe_band_high: Double,
-    val hard_cap: Double,
-    val top_set_rpe: Double,
-    val progression_attempted: Boolean,
-    val volume_posture: String,
-)
+// PhasePolicyDto deferred — no v0.1 screen consumes it; see §10.
 
 @Serializable data class NextSetRequest(
     val movement_id: Int,
@@ -365,6 +355,7 @@ These are deliberately deferred. Listed here so they don't sneak in.
 - **Build flavors (debug/release/local)** — single debug build for v0.1; release flavor with a TLS URL is a v0.2 concern.
 - **Crash reporting, analytics, ProGuard rules** — premature for a LAN-only smoke test.
 - **DataStore-backed settings screen** — earlier brainstorming option that was rejected in favor of hardcoded BuildConfig URL.
+- **Phase policy display** — the `/phase-policy/{phase}` endpoint exists on the server but no v0.1 screen consumes it. Adding a small "Current phase" header (read from `EngineState`, which would also need an endpoint) is a v0.2 candidate.
 
 ---
 
