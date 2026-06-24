@@ -3,8 +3,10 @@
 **Date:** 2026-06-24
 **Repo:** `~/projects/IronLog-V2-Client` (this repo)
 **Server:** `~/projects/IronLog-V2` (FastAPI/SQLModel) — separate repo
-**Status:** approved design; awaiting implementation plan
+**Status:** approved design; revised after server-contract review (2026-06-24); awaiting implementation plan
 **Scope:** v0.1 only — a smoke-test thin client that exercises every endpoint the server currently exposes
+
+> **Review revisions (2026-06-24):** (1) `MovementDto` extended to carry the server fields it was dropping — `status`, `load_equipment_id`, `objective_override`, `band_eligible`, `assist_subtype`, `assist_unit`; (2) Autoregulate picker restricted to `LADDER` movements (composite/assisted lifts don't use the ladder loop); (3) Compose compiler Gradle plugin called out (required for Kotlin 2.x); (4) §10 validator-status claim corrected; (5) tier stepper max derives from the selected movement's ladder length.
 
 ---
 
@@ -63,13 +65,14 @@ Single-module Android app following the same conventions as `~/projects/IronLog`
 | AGP | 8.7.3 | Matches IronLog |
 | Kotlin | 2.1.0 | Matches IronLog |
 | Compose BOM | 2024.12.01 | Matches IronLog |
+| Compose compiler plugin | `org.jetbrains.kotlin.plugin.compose` @ 2.1.0 | **Required for Kotlin 2.x** — the old `composeOptions { kotlinCompilerExtensionVersion }` no longer applies; apply this plugin (in the version catalog + `app/build.gradle.kts`) or the build fails |
 
 ### 3.3 Module layout
 
 ```
 IronLog-V2-Client/
 ├── app/
-│   ├── build.gradle.kts                              # AGP 8.7.3, Kotlin 2.1.0, kotlin-serialization plugin
+│   ├── build.gradle.kts                              # AGP 8.7.3, Kotlin 2.1.0, kotlin-serialization + compose-compiler plugins
 │   └── src/main/
 │       ├── AndroidManifest.xml                       # INTERNET permission, networkSecurityConfig
 │       ├── res/
@@ -124,7 +127,7 @@ NavHost (start = "movements")
 
 ### 4.2 MovementDetailScreen
 - Loads `getMovement(id)` on enter.
-- Renders Movement fields: name, base_name, region, lift_category, is_primary, progression_mode, scheme, increment_ladder, min_step, load_floor, cap, equipment_tags, family/anchor/derived_from_id/start_ratio, notes.
+- Renders Movement fields: name, base_name, region, lift_category, is_primary, status, progression_mode, scheme, objective_override, increment_ladder, min_step, load_floor, cap, equipment_tags, load_equipment_id, band_eligible, assist_subtype/assist_unit, family/anchor/derived_from_id/start_ratio, notes. (objective_override, band_eligible, and the assist fields are the design's signature flags — surface them, don't drop them.)
 - Bottom action: **"Try autoregulate"** → switches to Autoregulate tab with `movement_id` and (`current_load` = movement.load_floor or 100) pre-filled.
 
 ### 4.3 BandsScreen
@@ -133,10 +136,10 @@ NavHost (start = "movements")
 
 ### 4.4 AutoregulateScreen
 A form, not a list:
-- Movement picker (dropdown sourced from cached `/movements` — cache held in ViewModel for the screen's lifetime; first opening fetches if empty).
+- Movement picker (dropdown sourced from cached `/movements`, **filtered to `progression_mode == LADDER`** — composite (Hip Thrust) and assisted (Pull-up) movements don't use the ladder-based `next_set_load` and would return a meaningless ±step suggestion). Cache held in ViewModel for the screen's lifetime; first opening fetches if empty.
 - `current_load`: numeric `OutlinedTextField`, decimal keyboard.
 - Tap: three Material3 `SegmentedButton`s — `TOO_EASY · ON_TARGET · TOO_HARD`.
-- `tier`: integer (0..2), small `+ / −` stepper with the current value in the middle.
+- `tier`: integer stepper whose **max is `selected.increment_ladder.size - 1`** (e.g. Lateral Raise has a one-rung ladder, so tier is fixed at 0); `+ / −` with the current value in the middle.
 - "Suggest next load" button → POST → result card shows `suggested_load` and a comparison delta (`+5.0 lb`, `−10.0 lb`, or `unchanged`).
 - Re-submittable; the form retains its values after each submission.
 
@@ -233,6 +236,9 @@ All DTOs use **snake_case** field names so the FastAPI/SQLModel JSON deserialize
 @Serializable enum class Scheme { STRAIGHT, DOUBLE_PROGRESSION, TOPSET_BACKOFF, UNDULATION, WAVE, REP_RATIO }
 @Serializable enum class Objective { MAINTAIN, PROGRESS, MEASURE }
 @Serializable enum class Phase { CALIBRATION, CUT, STAB, REBUILD }
+@Serializable enum class Status { ACTIVE, INACTIVE, PREP }
+@Serializable enum class AssistSubtype { CONTINUOUS, REP_RATIO }
+@Serializable enum class AssistUnit { DEGREES, CABLE_LB, TUBE_COUNT, REP_COUNT }
 
 @Serializable data class MovementDto(
     val id: Int,
@@ -242,8 +248,13 @@ All DTOs use **snake_case** field names so the FastAPI/SQLModel JSON deserialize
     val lift_category: LiftCategory = LiftCategory.NONE,
     val is_primary: Boolean = false,
     val is_tracked: Boolean = true,
+    val status: Status = Status.ACTIVE,
+    val load_equipment_id: Int? = null,
     val progression_mode: ProgressionMode = ProgressionMode.NONE,
+    val assist_subtype: AssistSubtype? = null,
+    val assist_unit: AssistUnit? = null,
     val scheme: Scheme = Scheme.STRAIGHT,
+    val objective_override: Objective? = null,
     val increment_ladder: List<Double> = emptyList(),
     val min_step: Double? = null,
     val load_floor: Double? = null,
@@ -255,6 +266,7 @@ All DTOs use **snake_case** field names so the FastAPI/SQLModel JSON deserialize
     val is_family_anchor: Boolean = false,
     val derived_from_id: Int? = null,
     val start_ratio: Double? = null,
+    val band_eligible: Boolean = false,
     val notes: String? = null,
 )
 
@@ -351,7 +363,7 @@ These are deliberately deferred. Listed here so they don't sneak in.
 - **Local DB / offline mode** — no session-write endpoints exist yet.
 - **Workout logging UI** — same blocker; the entire `Session/PlannedSet/SetLog` capture layer needs server endpoints first.
 - **Session generation UI** — server stub raises `NotImplementedError` (`ironlog/engine/generation.py`).
-- **Validator UI** — the deterministic validator exists in the server repo as untracked work but isn't wired into any API yet.
+- **Validator UI** — the deterministic validator is the server's *next* unbuilt task (per the server `CLAUDE.md`); it does not exist yet and is wired into no API.
 - **Build flavors (debug/release/local)** — single debug build for v0.1; release flavor with a TLS URL is a v0.2 concern.
 - **Crash reporting, analytics, ProGuard rules** — premature for a LAN-only smoke test.
 - **DataStore-backed settings screen** — earlier brainstorming option that was rejected in favor of hardcoded BuildConfig URL.
