@@ -25,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
 import com.jauschua.ironlogv2.ui.theme.IronLogV2Theme
 
 class MainActivity : ComponentActivity() {
@@ -42,9 +43,9 @@ class MainActivity : ComponentActivity() {
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val TABS = listOf(
-    Tab("movements", "Movements", Icons.Filled.FitnessCenter),
-    Tab("bands", "Bands", Icons.Filled.Sync),
-    Tab("autoregulate", "Autoregulate", Icons.Filled.Calculate),
+    Tab(Routes.MOVEMENTS, "Movements", Icons.Filled.FitnessCenter),
+    Tab(Routes.BANDS, "Bands", Icons.Filled.Sync),
+    Tab(Routes.AUTOREGULATE, "Autoregulate", Icons.Filled.Calculate),
 )
 
 @Composable
@@ -75,12 +76,16 @@ private fun RootScaffold() {
     ) { inner ->
         NavHost(
             navController = nav,
-            startDestination = "movements",
+            startDestination = Routes.MOVEMENTS,
             modifier = Modifier.fillMaxSize().padding(inner),
         ) {
-            composable("movements") { Text("Movements (placeholder)") }
-            composable("bands") { Text("Bands (placeholder)") }
-            composable("autoregulate") { Text("Autoregulate (placeholder)") }
+            composable(Routes.MOVEMENTS) {
+                MovementsListScreen(onMovementClick = { id ->
+                    nav.navigate(Routes.movementDetail(id))
+                })
+            }
+            composable(Routes.BANDS) { Text("Bands (placeholder)") }
+            composable(Routes.AUTOREGULATE) { Text("Autoregulate (placeholder)") }
         }
     }
 }
