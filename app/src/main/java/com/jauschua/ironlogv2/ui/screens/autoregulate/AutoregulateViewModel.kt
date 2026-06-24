@@ -36,7 +36,7 @@ data class AutoregUi(
 class AutoregulateViewModel(
     private val libraryRepo: LibraryRepo,
     private val autoregRepo: AutoregRepo,
-    private val prefillSource: kotlinx.coroutines.flow.MutableStateFlow<Int?>,
+    private val prefillSource: MutableStateFlow<Int?>,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<AutoregUi>>(UiState.Loading)
