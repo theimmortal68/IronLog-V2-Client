@@ -43,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jauschua.ironlogv2.data.api.dto.FeedbackTap
 import com.jauschua.ironlogv2.data.api.dto.MovementDto
+import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,9 +58,7 @@ fun AutoregulateScreen(
                 is UiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                is UiState.Error   -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(s.msg, color = MaterialTheme.colorScheme.error)
-                }
+                is UiState.Error   -> ErrorRetryBox(s.msg) { vm.reload() }
                 is UiState.Success -> Form(s.data, vm)
             }
         }
@@ -153,16 +152,18 @@ private fun Form(ui: AutoregUi, vm: AutoregulateViewModel) {
         ui.lastResult?.let { res ->
             val current = ui.currentLoad.toDoubleOrNull()
             val delta = if (current != null) res.suggested_load - current else null
+            fun fmt(d: Double): String =
+                if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
             val deltaText = when {
                 delta == null -> "—"
-                delta > 0     -> "+${delta} lb"
-                delta < 0     -> "${delta} lb"
+                delta > 0     -> "+${fmt(delta)} lb"
+                delta < 0     -> "-${fmt(-delta)} lb"
                 else          -> "unchanged"
             }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Suggested next load", style = MaterialTheme.typography.labelMedium)
-                    Text("${res.suggested_load} lb", style = MaterialTheme.typography.headlineMedium)
+                    Text("${fmt(res.suggested_load)} lb", style = MaterialTheme.typography.headlineMedium)
                     Text("Δ $deltaText", style = MaterialTheme.typography.bodyMedium)
                 }
             }

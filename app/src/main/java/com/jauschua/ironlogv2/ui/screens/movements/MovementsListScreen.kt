@@ -1,7 +1,6 @@
 package com.jauschua.ironlogv2.ui.screens.movements
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -15,7 +14,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jauschua.ironlogv2.data.api.dto.MovementDto
+import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,7 +60,7 @@ fun MovementsListScreen(
         Surface(modifier = Modifier.fillMaxSize().padding(inner)) {
             when (val s = state) {
                 is UiState.Loading -> CenteredSpinner()
-                is UiState.Error   -> ErrorView(s.msg) { vm.reload() }
+                is UiState.Error   -> ErrorRetryBox(s.msg) { vm.reload() }
                 is UiState.Success -> MovementsList(s.data, onMovementClick)
             }
         }
@@ -93,16 +92,6 @@ private fun CenteredSpinner() {
 }
 
 @Composable
-private fun ErrorView(msg: String, onRetry: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(msg, color = MaterialTheme.colorScheme.error)
-            androidx.compose.material3.TextButton(onClick = onRetry) { Text("Retry") }
-        }
-    }
-}
-
-@Composable
 private fun MovementsList(items: List<MovementDto>, onClick: (Int) -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(items, key = { it.id }) { m ->
@@ -130,7 +119,6 @@ private fun MovementsList(items: List<MovementDto>, onClick: (Int) -> Unit) {
                     }
                 }
             }
-            HorizontalDivider()
         }
     }
 }

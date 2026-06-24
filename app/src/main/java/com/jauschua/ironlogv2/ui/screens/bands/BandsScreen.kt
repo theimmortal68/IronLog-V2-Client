@@ -1,6 +1,5 @@
 package com.jauschua.ironlogv2.ui.screens.bands
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,7 +19,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jauschua.ironlogv2.data.api.dto.BandCalStatus
 import com.jauschua.ironlogv2.data.api.dto.BandPairDto
+import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,15 +45,7 @@ fun BandsScreen(
                 is UiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                is UiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text(s.msg, color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { vm.reload() }) { Text("Retry") }
-                    }
-                }
+                is UiState.Error -> ErrorRetryBox(s.msg) { vm.reload() }
                 is UiState.Success -> BandsList(s.data)
             }
         }
