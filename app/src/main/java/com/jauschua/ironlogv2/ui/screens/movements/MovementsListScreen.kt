@@ -79,8 +79,7 @@ private fun HealthDot(state: UiState<*>) {
         modifier = Modifier
             .padding(end = 12.dp)
             .size(12.dp)
-            .clip(CircleShape)
-            .clickable(enabled = false) {},
+            .clip(CircleShape),
     ) {
         Surface(color = color, modifier = Modifier.fillMaxSize()) {}
     }
