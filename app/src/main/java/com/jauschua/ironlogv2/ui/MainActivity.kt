@@ -31,6 +31,7 @@ import androidx.navigation.navArgument
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.ui.screens.bands.BandsScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
+import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
 import com.jauschua.ironlogv2.ui.theme.IronLogV2Theme
 
@@ -109,7 +110,7 @@ private fun RootScaffold() {
                 )
             }
             composable(Routes.BANDS) { BandsScreen() }
-            composable(Routes.AUTOREGULATE) { Text("Autoregulate (placeholder)") }
+            composable(Routes.AUTOREGULATE) { AutoregulateScreen() }
         }
     }
 }
