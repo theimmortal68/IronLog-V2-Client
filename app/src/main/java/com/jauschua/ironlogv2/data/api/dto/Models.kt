@@ -1,6 +1,8 @@
 package com.jauschua.ironlogv2.data.api.dto
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 
 @Serializable enum class Region { UPPER, LOWER, CORE, NONE }
 
@@ -72,12 +74,14 @@ data class BandPairDto(
     val usable: Boolean = true,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class NextSetRequest(
     val movement_id: Int,
     val current_load: Double,
     val tap: FeedbackTap,
-    val tier: Int,
+    @EncodeDefault(mode = EncodeDefault.Mode.ALWAYS)
+    val tier: Int = 0,
 )
 
 @Serializable
