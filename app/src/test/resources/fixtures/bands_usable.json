@@ -1,0 +1,7 @@
+[
+  {"id":1,"label":"#0 Orange","bottom_lb":14.0,"peak_lb":30.0,"calibration_status":"MODELED","usable":true},
+  {"id":2,"label":"#1 Red","bottom_lb":29.0,"peak_lb":60.0,"calibration_status":"MODELED","usable":true},
+  {"id":3,"label":"#2 Blue","bottom_lb":47.0,"peak_lb":100.0,"calibration_status":"MODELED","usable":true},
+  {"id":4,"label":"#3 Green","bottom_lb":63.0,"peak_lb":133.0,"calibration_status":"MODELED","usable":true},
+  {"id":5,"label":"#4 Black","bottom_lb":102.0,"peak_lb":217.0,"calibration_status":"MODELED","usable":true}
+]

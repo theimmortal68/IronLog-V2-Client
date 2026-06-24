@@ -1,0 +1,24 @@
+[
+  {
+    "id": 1, "name": "Back Squat [PB]", "base_name": "Back Squat",
+    "region": "LOWER", "lift_category": "BACK_SQUAT",
+    "is_primary": true, "progression_mode": "LADDER",
+    "scheme": "TOPSET_BACKOFF",
+    "increment_ladder": [10.0, 5.0, 2.5], "min_step": 2.5, "load_floor": 45.0,
+    "equipment_tags": ["PB"]
+  },
+  {
+    "id": 2, "name": "Hip Thrust [HIP_THRUST]", "base_name": "Hip Thrust",
+    "region": "LOWER", "lift_category": "HIP_THRUST",
+    "progression_mode": "COMPOSITE", "scheme": "STRAIGHT",
+    "rpe_cap_exempt": true, "band_eligible": true,
+    "equipment_tags": ["HIP_THRUST"]
+  },
+  {
+    "id": 3, "name": "Lateral Raise [FT]", "base_name": "Lateral Raise",
+    "region": "UPPER", "progression_mode": "LADDER",
+    "scheme": "DOUBLE_PROGRESSION",
+    "increment_ladder": [2.5], "min_step": 2.5, "load_floor": 10.0,
+    "equipment_tags": ["FT"]
+  }
+]

@@ -5,6 +5,7 @@ import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.ServerResponseException
+import io.ktor.serialization.JsonConvertException
 import kotlinx.serialization.SerializationException
 import java.io.IOException
 
@@ -31,6 +32,8 @@ suspend fun <T> runCatchingApi(block: suspend () -> T): Result<T> = try {
     Result.failure(IronLogException(ApiError.Client(e.response.status.value, runCatching { e.response.toString() }.getOrNull())))
 } catch (e: ServerResponseException) {
     Result.failure(IronLogException(ApiError.Server(e.response.status.value, runCatching { e.response.toString() }.getOrNull())))
+} catch (e: JsonConvertException) {
+    Result.failure(IronLogException(ApiError.Parse(e)))
 } catch (e: SerializationException) {
     Result.failure(IronLogException(ApiError.Parse(e)))
 } catch (e: IOException) {
