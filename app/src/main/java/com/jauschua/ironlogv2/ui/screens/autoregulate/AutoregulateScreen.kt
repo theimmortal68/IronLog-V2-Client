@@ -152,16 +152,18 @@ private fun Form(ui: AutoregUi, vm: AutoregulateViewModel) {
         ui.lastResult?.let { res ->
             val current = ui.currentLoad.toDoubleOrNull()
             val delta = if (current != null) res.suggested_load - current else null
+            fun fmt(d: Double): String =
+                if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
             val deltaText = when {
                 delta == null -> "—"
-                delta > 0     -> "+${delta} lb"
-                delta < 0     -> "${delta} lb"
+                delta > 0     -> "+${fmt(delta)} lb"
+                delta < 0     -> "-${fmt(-delta)} lb"
                 else          -> "unchanged"
             }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Suggested next load", style = MaterialTheme.typography.labelMedium)
-                    Text("${res.suggested_load} lb", style = MaterialTheme.typography.headlineMedium)
+                    Text("${fmt(res.suggested_load)} lb", style = MaterialTheme.typography.headlineMedium)
                     Text("Δ $deltaText", style = MaterialTheme.typography.bodyMedium)
                 }
             }
