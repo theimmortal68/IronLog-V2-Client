@@ -29,6 +29,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.jauschua.ironlogv2.IronLogV2Application
+import com.jauschua.ironlogv2.ui.screens.bands.BandsScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
 import com.jauschua.ironlogv2.ui.theme.IronLogV2Theme
@@ -107,7 +108,7 @@ private fun RootScaffold() {
                     },
                 )
             }
-            composable(Routes.BANDS) { Text("Bands (placeholder)") }
+            composable(Routes.BANDS) { BandsScreen() }
             composable(Routes.AUTOREGULATE) { Text("Autoregulate (placeholder)") }
         }
     }
