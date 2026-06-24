@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jauschua.ironlogv2.data.api.dto.MovementDto
+import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,9 +54,7 @@ fun MovementDetailScreen(
         Surface(modifier = Modifier.fillMaxSize().padding(inner)) {
             when (val s = state) {
                 is UiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                is UiState.Error   -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(s.msg, color = MaterialTheme.colorScheme.error)
-                }
+                is UiState.Error   -> ErrorRetryBox(s.msg) { vm.reload() }
                 is UiState.Success -> DetailBody(s.data, onTryAutoregulate)
             }
         }
