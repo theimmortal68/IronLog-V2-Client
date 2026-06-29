@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -35,6 +36,7 @@ import com.jauschua.ironlogv2.ui.screens.capture.CaptureScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
 import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
+import com.jauschua.ironlogv2.ui.screens.wizard.WizardScreen
 import com.jauschua.ironlogv2.ui.theme.IronLogV2Theme
 
 class MainActivity : ComponentActivity() {
@@ -49,13 +51,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class Tab(val route: String, val label: String, val icon: ImageVector)
+private data class Tab(
+    val route: String,
+    val label: String,
+    val icon: ImageVector,
+    val navTarget: String = route,
+)
 
 private val TABS = listOf(
     Tab(Routes.MOVEMENTS, "Movements", Icons.Filled.FitnessCenter),
     Tab(Routes.BANDS, "Bands", Icons.Filled.Sync),
     Tab(Routes.AUTOREGULATE, "Autoregulate", Icons.Filled.Calculate),
     Tab(Routes.CAPTURE, "Capture", Icons.Filled.PlayArrow),
+    Tab(Routes.WIZARD, "Setup", Icons.Filled.Tune, navTarget = Routes.wizard()),
 )
 
 @Composable
@@ -71,7 +79,7 @@ private fun RootScaffold() {
                     NavigationBarItem(
                         selected = backStack?.destination?.hierarchy?.any { it.route == tab.route } == true,
                         onClick = {
-                            nav.navigate(tab.route) {
+                            nav.navigate(tab.navTarget) {
                                 popUpTo(nav.graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
@@ -115,6 +123,27 @@ private fun RootScaffold() {
             composable(Routes.BANDS) { BandsScreen() }
             composable(Routes.AUTOREGULATE) { AutoregulateScreen() }
             composable(Routes.CAPTURE) { CaptureScreen() }
+            composable(
+                route = Routes.WIZARD,
+                arguments = listOf(
+                    navArgument("programId") {
+                        type = NavType.IntType
+                        defaultValue = Routes.DEFAULT_PROGRAM_ID
+                    },
+                ),
+            ) { entry ->
+                val programId = entry.arguments?.getInt("programId") ?: Routes.DEFAULT_PROGRAM_ID
+                WizardScreen(
+                    programId = programId,
+                    onStarted = {
+                        nav.navigate(Routes.CAPTURE) {
+                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
+            }
         }
     }
 }
