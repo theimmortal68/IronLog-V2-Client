@@ -1,179 +1,81 @@
-# Task 7 Report — CaptureScreen + nav wiring (Logging Round-Trip)
+# Task 7 Report — WizardViewModel (first-run wizard)
 
-**Status:** DONE
-**Commit:** `136353e` — `feat(capture): CaptureScreen (prescription render + per-set tap) + nav wiring`
-**Branch:** `feat/logging-capture`
+Status: DONE
 
----
+## What was built
+`app/src/main/java/com/jauschua/ironlogv2/ui/screens/wizard/WizardViewModel.kt` — the first-run
+wizard state holder, mirroring `AutoregulateViewModel`/`CaptureViewModel` (UiState + Factory via
+`AppContainer`).
 
-## Files Created / Modified
+### Shape
+- `WizardUi(programId, programName, actionMovements, freshMovements)` — `actionMovements` = trust !=
+  FRESH (UNKNOWN to fill, STALE to confirm/adjust); `freshMovements` = trust == FRESH, summarized.
+- StateFlows exposed to the screen: `state: UiState<WizardUi>`, `entered: Map<Int,String>`,
+  `needsAttentionCount: Int`, `readyToStart: Boolean`, `submitError: String?`,
+  `startResult: StartProgramResponse?`.
+- Note: `needsAttentionCount`/`readyToStart` are kept as their own live StateFlows (not duplicated
+  inside `WizardUi`) so a resolve updates the single server-driven source of truth without rebuilding
+  the loaded snapshot — avoids drift.
 
-| File | Change |
-|------|--------|
-| `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/CaptureScreen.kt` | **Created** — full CaptureScreen composable |
-| `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/CaptureViewModel.kt` | **Modified** — added `_state`/`state` flow, `load()`, `TodayFactory` |
-| `app/src/main/java/com/jauschua/ironlogv2/ui/Nav.kt` | **Modified** — added `Routes.CAPTURE = "capture"` |
-| `app/src/main/java/com/jauschua/ironlogv2/ui/MainActivity.kt` | **Modified** — added Capture tab (PlayArrow icon) + `composable(Routes.CAPTURE)` |
+### Behavior
+- `load(programId)` → `repo.state(programId)`; splits movements into action/fresh; seeds `entered`
+  (STALE → `prefill_value.toString()`, UNKNOWN → `""`); adopts the server's `needs_attention_count`
+  and `ready_to_start`; `UiState.Success(WizardUi)`. Failures → `UiState.Error(humanMessage)`.
+- `setEntered(movementId, value)` → updates the per-movement entered map, clears `submitError`.
+- `resolve()` → collects **touched** entries only (non-blank entered text) into
+  `List<WizardResolution>(movement_id, value)`, parses each to Double (non-numeric → synchronous
+  `submitError = "Entered value must be a number"`, no round-trip), calls `repo.resolve(...)`, and
+  **adopts `needs_attention_count` / `ready_to_start` verbatim from `WizardResolveResponse`**.
+- `start()` → guarded by `if (!_readyToStart.value) return`; calls `repo.start(programId)`; on
+  success sets `startResult` so the screen can navigate.
 
----
+### Server-driven gate (key invariant)
+The completion gate is **never recomputed client-side**. The VM consumes the server's
+`needs_attention_count` and `ready_to_start` directly from both `WizardStateResponse` and
+`WizardResolveResponse` (the server owns trust via `compute_load_trust`). `start()` only checks the
+server-provided `_readyToStart` flag; there is no client tally of remaining movements.
 
-## Minimal VM Addition
+### resolve = touched-only
+Only movements with a non-blank entered value are sent. UNKNOWN ones the user filled and STALE ones
+(prefilled/confirmed) qualify; blank/untouched entries are skipped. Empty batch → no-op.
 
-`CaptureViewModel` gained three additions without touching the existing constructor or test-facing API:
+## AppContainer wiring
+`app/src/main/java/com/jauschua/ironlogv2/di/AppContainer.kt`:
+`val wizardRepo: WizardRepo by lazy { WizardRepo(apiClient) }` (mirrors `captureRepo`/`autoregRepo`);
+added `import com.jauschua.ironlogv2.data.repo.WizardRepo`. The `Factory` companion builds from
+`app.container.wizardRepo`.
 
-1. `private var sessionId: Int` (was `val`) — allows `load()` to set the real session id from `today()`.
-2. `val state: StateFlow<UiState<SessionDetailResponse?>>` — prescription state for the screen.
-3. `fun load()` — calls `repo.today()`, sets `_state` and `sessionId`. Called from `LaunchedEffect(Unit)` in `CaptureScreen`, **not from `init`**, so existing tests (which inject `sessionId = 7` and never call `load()`) are unaffected.
-4. `val TodayFactory` companion object — no-arg factory for the bottom-nav destination (passes `sessionId = 0` as placeholder, overwritten by `load()`).
+## Test
+`app/src/test/java/com/jauschua/ironlogv2/ui/wizard/WizardViewModelTest.kt` — MockEngine-backed
+`WizardRepo`, path-branching engine (wizard-state / wizard-resolve / start). 4 tests:
+1. `load_splitsMovementsAndShowsServerCount` — STALE+UNKNOWN action / FRESH summarized; count=2,
+   not ready; STALE prefilled `135.0`, UNKNOWN empty.
+2. `fillingUnknownThenResolve_decrementsCountAndFlipsReadyFromServer` — fill UNKNOWN + resolve →
+   count goes 2→0 and readyToStart flips true, both from the resolve response.
+3. `start_isNoOpUntilServerSaysReady` — `start()` is a no-op (startResult null) until the server
+   flips ready_to_start; then it activates (started/active true).
+4. `resolve_nonNumericEntrySurfacesValidationError` — non-numeric entry → submitError set
+   synchronously, no round-trip, gate untouched.
 
-This mirrors `AutoregulateViewModel.reload()` as specified.
+### Test harness note (TDD red→green)
+Red first: with `runTest` + `advanceUntilIdle`, the VM stayed `Loading` — the ktor MockEngine call
+resumes on a background dispatcher, so virtual-time advancing didn't wait for it (and `withTimeout`
+under `runTest` fired against the virtual clock → TimeoutCancellationException). Fixed in the test
+harness only: Main = `UnconfinedTestDispatcher` (eager fire-and-forget `viewModelScope.launch`),
+test bodies on `runBlocking` (real wall-clock), and a `StateFlow.await { predicate }` helper
+(`withTimeout(5s) { first(...) }`). Green after that — no production code was weakened to pass.
 
----
-
-## Gate #2 — Mandatory-tap disabled button (confirmed)
-
-In `SetCard`:
-```kotlin
-val logEnabled = !tapRequired || selectedTap != null
+## Gradle tails
 ```
-where `tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")`.
-
-`Button(onClick = onLogSet, enabled = logEnabled, ...)` — the "Log set" button is **disabled until a tap is selected for working roles**. Non-working roles (warmups) are unblocked. This is the client-side UI half of Gate #2; the VM and server enforce it independently.
-
----
-
-## Screen Behavior
-
-- **Loading**: `CircularProgressIndicator` centered.
-- **Error**: `ErrorRetryBox(msg) { vm.load() }` — retry re-calls `load()`.
-- **Success / null session**: "No planned session — generate one."
-- **Success / session present**: `LazyColumn` renders groups → exercises → planned sets.
-  - Per planned set: set role + index, target prescription (load/reps if available).
-  - **Current set** (`set_index == nextSetIndex`): shows load/reps `OutlinedTextField`s, three-state `SingleChoiceSegmentedButtonRow` (TOO_EASY / ON_TARGET / TOO_HARD), "Log set" button (disabled until tap for working roles).
-  - **Past sets** (`set_index < nextSetIndex`): shows "✓" checkmark.
-  - Input state (`setLoad`, `setReps`, `selectedTap`) auto-resets via `remember(nextSetIndex)` when the index advances.
-- **`logWorkingSet`**: called in `rememberCoroutineScope().launch` (suspends; write-before-advance preserved).
-- **Finish & Submit**: `Button(onClick = { vm.finish() })` → surfaces `submitResult` (COMPLETED / RETRY); button disabled once COMPLETED.
-- **UI error** (`vm.uiError`): shown in error color above Finish button.
-
----
-
-## Build Verification
-
-```
-./gradlew :app:assembleDebug
-BUILD SUCCESSFUL in 37s
-38 actionable tasks: 22 executed, 16 up-to-date
-```
-
----
-
-## Test Results
-
-```
-./gradlew testDebugUnitTest
-BUILD SUCCESSFUL in 4s
+./gradlew testDebugUnitTest --tests "*WizardViewModel*"   → BUILD SUCCESSFUL, 4/4
+./gradlew testDebugUnitTest (full)                         → BUILD SUCCESSFUL
 ```
 
-All **18 tests green**, 0 failures:
+## Test count
+27 total = 23 baseline + 4 new. All green.
+- ModelsTest 6, CaptureDurabilityTest 1, AutoregRepoTest 1, CaptureRepoTest 2, LibraryRepoTest 6,
+  WizardRepoTest 3, CaptureViewModelTest 4, **WizardViewModelTest 4**.
 
-| Suite | Tests |
-|-------|-------|
-| CaptureViewModelTest | 3 |
-| CaptureDurabilityTest | 1 |
-| CaptureRepoTest | 1 |
-| AutoregRepoTest | 1 |
-| LibraryRepoTest | 6 |
-| ModelsTest | 6 |
-
-Two pre-existing `@OptIn(ExperimentalCoroutinesApi)` warnings in `CaptureViewModelTest` (not introduced by this task).
-
----
-
-## Concerns / Notes
-
-None. The implementation mirrors `AutoregulateScreen` exactly (same `UiState` when-branches, `LaunchedEffect`, `Scaffold`/`TopAppBar`/`Surface` wrapper, Material3 components). No novel patterns introduced.
-
----
-
-## Final-review fix wave (client)
-
-**Commit:** `0b9ffe4` — `fix(capture): multi-exercise progression cursor (loop closes for real sessions) + test; gate-5 negative (drafts persist on failed submit)`
-**Branch:** `feat/logging-capture`
-
-### Fix ① — Multi-exercise progression cursor (the loop-closer not closing)
-
-**Root cause:** `CaptureViewModel` tracked progress as `_nextSetIndex: MutableStateFlow<Int>` (a global counter), and `CaptureScreen` checked `plannedSet.set_index == nextSetIndex`. `PlannedSetOut.set_index` is **per-exercise** (resets to 0 at the start of each exercise). After logging exercise-0's sets (set_index 0→1, counter advances to 2), every exercise-1 set had `set_index < 2` → all appeared "past", with no input controls rendered. Only the first exercise in a session could be logged. Program days are 6-9 exercises, making the screen non-functional for any real workout.
-
-**Fix — flattened-position cursor over the prescription:**
-
-`CaptureViewModel` now:
-- Stores `private var flattenedPrescription: List<PlannedSetOut>` computed in `load()` by flattening `groups → exercises → planned_sets` in order.
-- Exposes `currentPlannedSetId: StateFlow<Int?>` — the `PlannedSetOut.id` (globally-unique) of the set to log next; `null` when the prescription is exhausted.
-- `logWorkingSet` advances the cursor via `flattenedPrescription.indexOfFirst { it.id == plannedSetId } + 1` in the flat list, crossing exercise boundaries automatically.
-- Write-before-advance ordering preserved: cursor advances only after `repo.logSet()` returns (the Room `@Insert suspend` completes inline before the index update).
-- `internal fun initPrescriptionForTest(sets: List<PlannedSetOut>)` helper for unit tests.
-
-`CaptureScreen` changes:
-- `nextSetIndex` replaced with `currentPlannedSetId: Int?` throughout.
-- `SessionContent` computes `flatSets` (`remember(session)`) and `pastIds` (`remember(session, currentPlannedSetId)`) — the set of IDs that appear before the cursor in the flat order.
-- `isCurrent = plannedSet.id == currentPlannedSetId`; `isPast = plannedSet.id in pastIds`.
-- `remember(currentPlannedSetId)` keys for input state reset.
-
-### Fix ①'s multi-exercise test — `multi_exercise_cursor_walks_all_sets`
-
-Prescription: 2 exercises × 2 working sets (ids 1,2,3,4; set_index 0,1,0,1 — the trap).
-
-Assertions:
-```
-initial cursor: E0S0 (id=1)
-after E0S0 → E0S1 (id=2)
-after E0S1 → E1S0 (cross-exercise boundary) (id=3)   ← the critical one
-after E1S0 → E1S1 (id=4)
-after E1S1 → end of prescription (null)
-```
-
-**RED-confirmed against the broken cursor** — reverted advance to `flattenedPrescription.find { it.set_index == setIndex + 1 }?.id`:
-
-```
-java.lang.AssertionError: after E0S1 → E1S0 (cross-exercise boundary) expected:<3> but was:<null>
-```
-
-After logging E0S1 (setIndex=1), the broken form looks for a set with `set_index == 2`. No such set exists (exercise-1 resets to 0), so cursor becomes `null`. Exercise-1 is permanently stuck — the bug class is confirmed caught. Fix restored immediately; full suite went GREEN.
-
-### Gate-#5 negative test — `submit_failure_preserves_drafts` (CaptureRepoTest)
-
-`MockEngine` returns HTTP 500. Because `ApiClient` is configured with `expectSuccess = true`, Ktor throws `ServerResponseException`, which `runCatchingApi` catches as `Result.failure`. The `dao.clearSetLogs(sessionId)` line after the API call is never reached.
-
-```kotlin
-val res = repo.submit(7)
-assertTrue("submit must return failure on 500", res.isFailure)
-assertEquals("drafts must be preserved on failure", 1, dao.setLogsForSession(7).size)
-```
-
-Test passes: failed submit returns `Result.failure` AND drafts remain for retry.
-
-### Gradle tails
-
-```
-./gradlew testDebugUnitTest --rerun
-BUILD SUCCESSFUL in 4s
-
-./gradlew :app:assembleDebug
-BUILD SUCCESSFUL in 1s
-38 actionable tasks: 3 executed, 35 up-to-date
-```
-
-### Test counts
-
-| Suite | Tests |
-|-------|-------|
-| CaptureViewModelTest | 4 (+1 multi_exercise_cursor_walks_all_sets) |
-| CaptureDurabilityTest | 1 |
-| CaptureRepoTest | 2 (+1 submit_failure_preserves_drafts) |
-| AutoregRepoTest | 1 |
-| LibraryRepoTest | 6 |
-| ModelsTest | 6 |
-| **Total** | **20** (was 18) |
-
-All 20 tests green. `assembleDebug` BUILD SUCCESSFUL.
+## Commit
+`feat(wizard): WizardViewModel (needs-attention state, server-driven ready_to_start, resolve/start)`
+hash: db25107
