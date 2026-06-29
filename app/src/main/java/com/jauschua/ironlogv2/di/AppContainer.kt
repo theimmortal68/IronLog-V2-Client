@@ -7,12 +7,14 @@ import com.jauschua.ironlogv2.data.local.CaptureDatabase
 import com.jauschua.ironlogv2.data.repo.AutoregRepo
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.data.repo.LibraryRepo
+import com.jauschua.ironlogv2.data.repo.WizardRepo
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class AppContainer(private val appContext: Context) {
     val apiClient: ApiClient by lazy { ApiClient() }
     val libraryRepo: LibraryRepo by lazy { LibraryRepo(apiClient) }
     val autoregRepo: AutoregRepo by lazy { AutoregRepo(apiClient) }
+    val wizardRepo: WizardRepo by lazy { WizardRepo(apiClient) }
     val captureDb: CaptureDatabase by lazy {
         Room.databaseBuilder(appContext, CaptureDatabase::class.java, "capture.db").build()
     }
