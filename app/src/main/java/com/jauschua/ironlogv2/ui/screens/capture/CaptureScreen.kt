@@ -51,7 +51,7 @@ fun CaptureScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val uiError by vm.uiError.collectAsStateWithLifecycle()
     val submitResult by vm.submitResult.collectAsStateWithLifecycle()
-    val nextSetIndex by vm.nextSetIndex.collectAsStateWithLifecycle()
+    val currentPlannedSetId by vm.currentPlannedSetId.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { vm.load() }
@@ -70,7 +70,7 @@ fun CaptureScreen(
                             Text("No planned session — generate one.")
                         }
                     } else {
-                        SessionContent(session, nextSetIndex, uiError, submitResult, scope, vm)
+                        SessionContent(session, currentPlannedSetId, uiError, submitResult, scope, vm)
                     }
                 }
             }
@@ -82,16 +82,28 @@ fun CaptureScreen(
 @Composable
 private fun SessionContent(
     session: SessionDetailResponse,
-    nextSetIndex: Int,
+    currentPlannedSetId: Int?,
     uiError: String?,
     submitResult: String?,
     scope: CoroutineScope,
     vm: CaptureViewModel,
 ) {
-    // Input state for the current set; auto-resets when nextSetIndex changes.
-    var setLoad by remember(nextSetIndex) { mutableStateOf("") }
-    var setReps by remember(nextSetIndex) { mutableStateOf("") }
-    var selectedTap by remember(nextSetIndex) { mutableStateOf<String?>(null) }
+    // Flattened prescription for cursor-position queries (stable as long as session doesn't change).
+    val flatSets = remember(session) {
+        session.groups.flatMap { g -> g.exercises.flatMap { it.planned_sets } }
+    }
+    // IDs of sets that appear BEFORE the cursor in the flat order — rendered with "✓".
+    // When currentPlannedSetId is null (all done), cursorIdx = flatSets.size → all are past.
+    val pastIds = remember(session, currentPlannedSetId) {
+        val cursorIdx = flatSets.indexOfFirst { it.id == currentPlannedSetId }
+            .let { if (it < 0) flatSets.size else it }
+        flatSets.take(cursorIdx).map { it.id }.toSet()
+    }
+
+    // Input state for the current set; auto-resets when the cursor advances.
+    var setLoad by remember(currentPlannedSetId) { mutableStateOf("") }
+    var setReps by remember(currentPlannedSetId) { mutableStateOf("") }
+    var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -127,8 +139,8 @@ private fun SessionContent(
                 }
 
                 exercise.planned_sets.forEach { plannedSet ->
-                    val isCurrent = plannedSet.set_index == nextSetIndex
-                    val isPast = plannedSet.set_index < nextSetIndex
+                    val isCurrent = plannedSet.id == currentPlannedSetId
+                    val isPast = plannedSet.id in pastIds
                     val tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")
 
                     item(key = "set-${plannedSet.id}") {
