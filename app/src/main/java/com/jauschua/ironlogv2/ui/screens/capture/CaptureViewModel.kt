@@ -6,8 +6,12 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jauschua.ironlogv2.IronLogV2Application
+import com.jauschua.ironlogv2.data.api.IronLogException
+import com.jauschua.ironlogv2.data.api.humanMessage
+import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.local.SetLogDraft
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
+import com.jauschua.ironlogv2.ui.UiState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,8 +21,12 @@ private val TAP_REQUIRED = setOf("WORKING", "TOP", "BACKOFF")
 
 class CaptureViewModel(
     private val repo: CaptureRepo,
-    private val sessionId: Int,
+    /** Mutable so [load] can set it from today's session; tests inject a known id directly. */
+    private var sessionId: Int,
 ) : ViewModel() {
+
+    private val _state = MutableStateFlow<UiState<SessionDetailResponse?>>(UiState.Loading)
+    val state: StateFlow<UiState<SessionDetailResponse?>> = _state.asStateFlow()
 
     private val _uiError = MutableStateFlow<String?>(null)
     val uiError: StateFlow<String?> = _uiError.asStateFlow()
@@ -28,6 +36,27 @@ class CaptureViewModel(
 
     private val _submitResult = MutableStateFlow<String?>(null)
     val submitResult: StateFlow<String?> = _submitResult.asStateFlow()
+
+    /**
+     * Load today's planned session.  Called from the screen's [LaunchedEffect] on entry.
+     * Sets [sessionId] from the loaded session so [logWorkingSet]/[finish] use the correct id.
+     * Tests inject [sessionId] directly and never call this, so they are unaffected.
+     */
+    fun load() {
+        _state.value = UiState.Loading
+        viewModelScope.launch {
+            repo.today()
+                .onSuccess { session ->
+                    if (session != null) sessionId = session.id
+                    _state.value = UiState.Success(session)
+                }
+                .onFailure { e ->
+                    val msg = (e as? IronLogException)?.error?.humanMessage()
+                        ?: e.message ?: "Unknown error"
+                    _state.value = UiState.Error(msg)
+                }
+        }
+    }
 
     /**
      * Write-before-advance entry point.
@@ -89,6 +118,18 @@ class CaptureViewModel(
     }
 
     companion object {
+        /**
+         * No-arg factory for the Capture bottom-nav destination.
+         * The real session id is resolved inside [load] once today's session is fetched.
+         */
+        val TodayFactory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
+                    as IronLogV2Application
+                CaptureViewModel(repo = app.container.captureRepo, sessionId = 0)
+            }
+        }
+
         /** Scoped factory — pass the session id from the nav arg. */
         fun factory(sessionId: Int): ViewModelProvider.Factory = viewModelFactory {
             initializer {

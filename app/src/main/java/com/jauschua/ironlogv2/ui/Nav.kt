@@ -5,6 +5,7 @@ object Routes {
     const val MOVEMENT_DETAIL = "movement/{id}"
     const val BANDS = "bands"
     const val AUTOREGULATE = "autoregulate"
+    const val CAPTURE = "capture"
 
     fun movementDetail(id: Int): String = "movement/$id"
 }
