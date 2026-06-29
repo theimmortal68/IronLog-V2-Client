@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -30,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.ui.screens.bands.BandsScreen
+import com.jauschua.ironlogv2.ui.screens.capture.CaptureScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
 import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
@@ -53,6 +55,7 @@ private val TABS = listOf(
     Tab(Routes.MOVEMENTS, "Movements", Icons.Filled.FitnessCenter),
     Tab(Routes.BANDS, "Bands", Icons.Filled.Sync),
     Tab(Routes.AUTOREGULATE, "Autoregulate", Icons.Filled.Calculate),
+    Tab(Routes.CAPTURE, "Capture", Icons.Filled.PlayArrow),
 )
 
 @Composable
@@ -111,6 +114,7 @@ private fun RootScaffold() {
             }
             composable(Routes.BANDS) { BandsScreen() }
             composable(Routes.AUTOREGULATE) { AutoregulateScreen() }
+            composable(Routes.CAPTURE) { CaptureScreen() }
         }
     }
 }
