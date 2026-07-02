@@ -6,6 +6,7 @@ import com.jauschua.ironlogv2.data.api.dto.FeedbackTap
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.capture.formatRestTime
+import com.jauschua.ironlogv2.ui.screens.capture.restContextByPlannedSetId
 import com.jauschua.ironlogv2.ui.screens.capture.restSeconds
 import com.jauschua.ironlogv2.ui.screens.capture.shouldStartRest
 import org.junit.Assert.assertEquals
@@ -85,6 +86,49 @@ class RestTimerTest {
         assertFalse(shouldStartRest(group, e1))
         assertFalse(shouldStartRest(group, e2))
         assertTrue(shouldStartRest(group, e3))
+    }
+
+    // ── restContextByPlannedSetId: rest fires only when a further set follows (Change 1) ──
+
+    private fun exerciseWithSets(id: Int, setIds: List<Int>) = ExerciseOut(
+        id = id, movement_id = id, movement_name = "ex$id", order_index = id,
+        scheme = "STRAIGHT", objective = "",
+        planned_sets = setIds.mapIndexed { i, sid ->
+            PlannedSetOut(id = sid, set_index = i, set_role = "WORKING", is_warmup = false)
+        },
+    )
+
+    @Test
+    fun restContext_straight_triggers_every_set_except_the_last() {
+        val e = exerciseWithSets(1, listOf(101, 102, 103))
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 3,
+            rest_seconds = 90, exercises = listOf(e),
+        )
+        val ctx = restContextByPlannedSetId(listOf(group))
+        assertTrue(ctx.getValue(101).triggersRest)
+        assertTrue(ctx.getValue(102).triggersRest)
+        assertFalse(ctx.getValue(103).triggersRest)
+    }
+
+    @Test
+    fun restContext_giant_set_triggers_only_last_exercise_and_never_the_final_round() {
+        val e1 = exerciseWithSets(1, listOf(101, 102, 103))
+        val e2 = exerciseWithSets(2, listOf(201, 202, 203))
+        val e3 = exerciseWithSets(3, listOf(301, 302, 303))
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "GIANT_SET", rounds = 3,
+            rest_seconds = 60, exercises = listOf(e1, e2, e3),
+        )
+        val ctx = restContextByPlannedSetId(listOf(group))
+        // Non-last exercises never own the trigger — every set false.
+        listOf(101, 102, 103, 201, 202, 203).forEach {
+            assertFalse(ctx.getValue(it).triggersRest)
+        }
+        // Last exercise: rounds 1 & 2 trigger, the final round (its last set) is suppressed.
+        assertTrue(ctx.getValue(301).triggersRest)
+        assertTrue(ctx.getValue(302).triggersRest)
+        assertFalse(ctx.getValue(303).triggersRest)
     }
 
     // ── formatRestTime: mm:ss display for the countdown label ───────────────────────────

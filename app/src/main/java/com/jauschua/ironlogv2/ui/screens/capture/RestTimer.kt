@@ -53,19 +53,31 @@ internal data class SetRestContext(
  * Maps every [com.jauschua.ironlogv2.data.api.dto.PlannedSetOut.id] in [groups] to its
  * [SetRestContext]. A group with no [GroupOut.rest_seconds] is skipped entirely — there's
  * nothing to count down, so its planned sets are simply absent from the result (no trigger).
+ *
+ * A rest only fires when a further set follows that this rest precedes, so [triggersRest] is
+ * computed PER planned-set: `shouldStartRest(g, e) && ps.id != e.planned_sets.last().id` — i.e.
+ * the trigger-owning exercise (see [shouldStartRest]) rests after each of its sets EXCEPT its
+ * last. For a STRAIGHT exercise this suppresses the rest after its final set; for a GIANT_SET
+ * (where only the group's last exercise owns the trigger) the last exercise's final planned set
+ * IS the final round's terminal item, so this suppresses the after-last-round rest too. The
+ * other fields ([baseRestSeconds], [tierLabel], [isGiantSet]) are identical across an exercise's
+ * sets.
  */
 internal fun restContextByPlannedSetId(groups: List<GroupOut>): Map<Int, SetRestContext> {
     val result = mutableMapOf<Int, SetRestContext>()
     for (g in groups) {
         val baseRest = g.rest_seconds ?: continue
         for (e in g.exercises) {
-            val ctx = SetRestContext(
-                baseRestSeconds = baseRest,
-                tierLabel = g.label ?: "",
-                isGiantSet = g.group_type == "GIANT_SET",
-                triggersRest = shouldStartRest(g, e),
-            )
-            for (ps in e.planned_sets) result[ps.id] = ctx
+            val ownsTrigger = shouldStartRest(g, e)
+            val lastSetId = e.planned_sets.lastOrNull()?.id
+            for (ps in e.planned_sets) {
+                result[ps.id] = SetRestContext(
+                    baseRestSeconds = baseRest,
+                    tierLabel = g.label ?: "",
+                    isGiantSet = g.group_type == "GIANT_SET",
+                    triggersRest = ownsTrigger && ps.id != lastSetId,
+                )
+            }
         }
     }
     return result
