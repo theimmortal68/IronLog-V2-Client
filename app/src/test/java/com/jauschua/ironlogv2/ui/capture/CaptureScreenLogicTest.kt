@@ -6,6 +6,7 @@ import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import com.jauschua.ironlogv2.ui.screens.capture.formatRepsTarget
+import com.jauschua.ironlogv2.ui.screens.capture.groupProgressHint
 import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
 import com.jauschua.ironlogv2.ui.screens.capture.prefillReps
@@ -205,6 +206,46 @@ class CaptureScreenLogicTest {
         val past = pastSetIds(flat, currentPlannedSetId = 101)
 
         assertEquals(setOf(100, 200, 300), past)
+    }
+
+    // ── groupProgressHint: collapsed-card progress ("k/N sets" or "✓ done") ──────────────
+
+    private fun groupWithSetIds(setIds: List<Int>): GroupOut {
+        val exercise = ExerciseOut(
+            id = 1, movement_id = 1, movement_name = "ex1", order_index = 0,
+            scheme = "STRAIGHT", objective = "",
+            planned_sets = setIds.mapIndexed { i, sid ->
+                PlannedSetOut(id = sid, set_index = i, set_role = "WORKING", is_warmup = false)
+            },
+        )
+        return GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = setIds.size,
+            exercises = listOf(exercise),
+        )
+    }
+
+    @Test
+    fun groupProgressHint_none_logged_shows_zero_of_total() {
+        val group = groupWithSetIds(listOf(10, 11, 12))
+        assertEquals("0/3 sets", groupProgressHint(group, pastIds = emptySet()))
+    }
+
+    @Test
+    fun groupProgressHint_some_logged_shows_logged_of_total() {
+        val group = groupWithSetIds(listOf(10, 11, 12))
+        assertEquals("2/3 sets", groupProgressHint(group, pastIds = setOf(10, 11)))
+    }
+
+    @Test
+    fun groupProgressHint_all_logged_shows_done() {
+        val group = groupWithSetIds(listOf(10, 11, 12))
+        assertEquals("✓ done", groupProgressHint(group, pastIds = setOf(10, 11, 12)))
+    }
+
+    @Test
+    fun groupProgressHint_empty_group_is_not_done() {
+        val group = groupWithSetIds(emptyList())
+        assertEquals("0/0 sets", groupProgressHint(group, pastIds = emptySet()))
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.jauschua.ironlogv2.ui.screens.capture
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -39,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import android.view.WindowManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
@@ -114,6 +117,20 @@ private fun SessionContent(
     var setReps by remember(currentPlannedSetId) { mutableStateOf(currentSet?.let(::prefillReps) ?: "") }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
 
+    // Collapsible group cards (accordion follows the cursor). Index of the group that owns the
+    // current planned set — the one auto-expanded by default; null when the session is fully
+    // logged (currentPlannedSetId == null), so every group collapses.
+    val currentGroupIndex = remember(session, currentPlannedSetId) {
+        session.groups.indexOfFirst { g -> g.exercises.any { e -> e.planned_sets.any { it.id == currentPlannedSetId } } }
+            .takeIf { it >= 0 }
+    }
+    // Manual expand/collapse overrides, keyed by group index. Cleared whenever the cursor advances
+    // to a NEW group (below), so a manual toggle persists only until then, then reverts to auto.
+    val expandOverrides = remember { mutableStateMapOf<Int, Boolean>() }
+    LaunchedEffect(currentGroupIndex) { expandOverrides.clear() }
+    // A group is expanded if manually overridden; otherwise iff it holds the cursor.
+    fun isGroupExpanded(gi: Int): Boolean = expandOverrides[gi] ?: (gi == currentGroupIndex)
+
     // Alarm-stream tone cues driven off the countdown value (see RestToneCue). The VM's ticker
     // emits 120…2, 1, then null (it never emits 0 — `next <= 0` clears to null and breaks), so
     // completion is the 1 → null transition. A skip clears from an arbitrary value to null, so
@@ -171,57 +188,63 @@ private fun SessionContent(
             }
 
             session.groups.forEachIndexed { gi, group ->
+                // Auto-accordion: expanded iff this group holds the cursor, unless manually
+                // overridden. Compute here (LazyColumn item lambdas aren't a scope for a local fun).
+                val expanded = isGroupExpanded(gi)
+
                 item(key = "group-$gi") {
-                    Text(
-                        text = "Group ${gi + 1} — ${group.group_type}" +
-                            (group.label?.let { " ($it)" } ?: ""),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(top = 8.dp),
+                    GroupHeader(
+                        title = group.label ?: group.group_type,
+                        progressHint = groupProgressHint(group, pastIds),
+                        expanded = expanded,
+                        onToggle = { expandOverrides[gi] = !expanded },
                     )
                 }
 
-                group.exercises.forEachIndexed { ei, exercise ->
-                    item(key = "ex-$gi-$ei") {
-                        Text(
-                            text = exercise.movement_name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(start = 8.dp),
-                        )
-                    }
-
-                    exercise.planned_sets.forEach { plannedSet ->
-                        val isCurrent = plannedSet.id == currentPlannedSetId
-                        val isPast = plannedSet.id in pastIds
-                        val tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")
-
-                        item(key = "set-${plannedSet.id}") {
-                            SetCard(
-                                plannedSet = plannedSet,
-                                unilateral = exercise.unilateral,
-                                isCurrent = isCurrent,
-                                isPast = isPast,
-                                tapRequired = tapRequired,
-                                setLoad = if (isCurrent) setLoad else "",
-                                setReps = if (isCurrent) setReps else "",
-                                selectedTap = if (isCurrent) selectedTap else null,
-                                onLoadChange = { setLoad = it },
-                                onRepsChange = { setReps = it },
-                                onTapSelect = { selectedTap = it },
-                                onLogSet = {
-                                    scope.launch {
-                                        vm.logWorkingSet(
-                                            plannedSetId = plannedSet.id,
-                                            movementId = exercise.movement_id,
-                                            setIndex = plannedSet.set_index,
-                                            setRole = plannedSet.set_role,
-                                            actualLoad = setLoad.toDoubleOrNull(),
-                                            actualReps = setReps.toIntOrNull(),
-                                            tap = selectedTap,
-                                            isWarmup = plannedSet.is_warmup,
-                                        )
-                                    }
-                                },
+                if (expanded) {
+                    group.exercises.forEachIndexed { ei, exercise ->
+                        item(key = "ex-$gi-$ei") {
+                            Text(
+                                text = exercise.movement_name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = 8.dp),
                             )
+                        }
+
+                        exercise.planned_sets.forEach { plannedSet ->
+                            val isCurrent = plannedSet.id == currentPlannedSetId
+                            val isPast = plannedSet.id in pastIds
+                            val tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")
+
+                            item(key = "set-${plannedSet.id}") {
+                                SetCard(
+                                    plannedSet = plannedSet,
+                                    unilateral = exercise.unilateral,
+                                    isCurrent = isCurrent,
+                                    isPast = isPast,
+                                    tapRequired = tapRequired,
+                                    setLoad = if (isCurrent) setLoad else "",
+                                    setReps = if (isCurrent) setReps else "",
+                                    selectedTap = if (isCurrent) selectedTap else null,
+                                    onLoadChange = { setLoad = it },
+                                    onRepsChange = { setReps = it },
+                                    onTapSelect = { selectedTap = it },
+                                    onLogSet = {
+                                        scope.launch {
+                                            vm.logWorkingSet(
+                                                plannedSetId = plannedSet.id,
+                                                movementId = exercise.movement_id,
+                                                setIndex = plannedSet.set_index,
+                                                setRole = plannedSet.set_role,
+                                                actualLoad = setLoad.toDoubleOrNull(),
+                                                actualReps = setReps.toIntOrNull(),
+                                                tap = selectedTap,
+                                                isWarmup = plannedSet.is_warmup,
+                                            )
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -256,6 +279,46 @@ private fun SessionContent(
                 }
             }
         }
+    }
+}
+
+/**
+ * Clickable, collapsible group header row: the tier label ([title], e.g. "T1" / "T2 GS"), a
+ * progress hint ([progressHint], e.g. "4/9 sets" or "✓ done"), and a right-edge `−`/`+` affordance
+ * (`−` expanded, `+` collapsed). The whole row toggles via [onToggle].
+ */
+@Composable
+private fun GroupHeader(
+    title: String,
+    progressHint: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "· $progressHint",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            text = if (expanded) "−" else "+",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 
@@ -400,6 +463,19 @@ internal fun pastSetIds(flatSets: List<PlannedSetOut>, currentPlannedSetId: Int?
     val cursorIdx = flatSets.indexOfFirst { it.id == currentPlannedSetId }
         .let { if (it < 0) flatSets.size else it }
     return flatSets.take(cursorIdx).map { it.id }.toSet()
+}
+
+/**
+ * Collapsed-card progress hint for a group: `"✓ done"` when every set in the group is logged (all
+ * its planned-set ids are in [pastIds]), else `"logged/total sets"`. A set is "logged" iff it's
+ * before the cursor — [pastIds] is the same [pastSetIds] set [SessionContent] already computes.
+ * An empty group (total == 0) reports `"0/0 sets"`, never `"✓ done"`.
+ */
+internal fun groupProgressHint(group: GroupOut, pastIds: Set<Int>): String {
+    val ids = group.exercises.flatMap { it.planned_sets }.map { it.id }
+    val total = ids.size
+    val logged = ids.count { it in pastIds }
+    return if (total > 0 && logged == total) "✓ done" else "$logged/$total sets"
 }
 
 /**
