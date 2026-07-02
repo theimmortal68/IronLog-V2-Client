@@ -8,12 +8,15 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.data.api.IronLogException
 import com.jauschua.ironlogv2.data.api.humanMessage
+import com.jauschua.ironlogv2.data.api.dto.FeedbackTap
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.local.SetLogDraft
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.ui.UiState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -114,6 +117,25 @@ class CaptureViewModel(
     val submitResult: StateFlow<String?> = _submitResult.asStateFlow()
 
     /**
+     * Rest-trigger context per planned-set id (see [restContextByPlannedSetId]), computed once
+     * alongside [flattenedPrescription]. Empty for tests that only inject a flat set list via
+     * [initPrescriptionForTest] — those have no group/tier info to derive rest from, so the
+     * countdown simply never triggers, which is correct (nothing to base it on).
+     */
+    private var restContextBySetId: Map<Int, SetRestContext> = emptyMap()
+
+    /** The running rest countdown ticker, if any. Cancelled/replaced by [startRest]/[skipRest]. */
+    private var restJob: Job? = null
+
+    /**
+     * Seconds remaining on the current rest countdown; null when no countdown is running.
+     * Set by [startRest] (auto-triggered from [logWorkingSet]) and cleared by [skipRest] or
+     * when the countdown reaches zero. [addRestTime] extends a running countdown.
+     */
+    private val _restRemainingSeconds = MutableStateFlow<Int?>(null)
+    val restRemainingSeconds: StateFlow<Int?> = _restRemainingSeconds.asStateFlow()
+
+    /**
      * Load today's planned session.  Called from the screen's [LaunchedEffect] on entry.
      * Sets [sessionId] from the loaded session so [logWorkingSet]/[finish] use the correct id.
      * Tests inject [sessionId] directly and never call this, so they are unaffected.
@@ -128,6 +150,7 @@ class CaptureViewModel(
                         flattenedPrescription = flattenPrescription(session.groups)
                         unilateralSetIds = unilateralPlannedSetIds(session.groups)
                         unilateralSideCount = 0
+                        restContextBySetId = restContextByPlannedSetId(session.groups)
                         _currentPlannedSetId.value = flattenedPrescription.firstOrNull()?.id
                     }
                     _state.value = UiState.Success(session)
@@ -162,6 +185,7 @@ class CaptureViewModel(
         flattenedPrescription = flattenPrescription(groups)
         unilateralSetIds = unilateralPlannedSetIds(groups)
         unilateralSideCount = 0
+        restContextBySetId = restContextByPlannedSetId(groups)
         _currentPlannedSetId.value = flattenedPrescription.firstOrNull()?.id
     }
 
@@ -228,7 +252,51 @@ class CaptureViewModel(
             unilateralSideCount = 0
             val idx = flattenedPrescription.indexOfFirst { it.id == plannedSetId }
             _currentPlannedSetId.value = flattenedPrescription.getOrNull(idx + 1)?.id
+
+            // Auto-start the rest countdown for the set just completed (write already
+            // committed above). STRAIGHT groups trigger after every set; GIANT_SET groups
+            // only after the round's last item — see shouldStartRest / restContextByPlannedSetId.
+            restContextBySetId[plannedSetId]?.let { ctx ->
+                if (ctx.triggersRest) {
+                    val tapEnum = tap?.let { runCatching { FeedbackTap.valueOf(it) }.getOrNull() }
+                        ?: FeedbackTap.ON_TARGET
+                    startRest(restSeconds(ctx.baseRestSeconds, ctx.tierLabel, tapEnum, ctx.isGiantSet))
+                }
+            }
         }
+    }
+
+    /**
+     * (Re)starts the rest countdown at [seconds], ticking down once per second until it hits
+     * zero, then clearing to null. Cancels any prior ticker first so back-to-back triggers
+     * (e.g. a fast-fingered lifter logging two STRAIGHT sets before the first countdown ends)
+     * restart cleanly instead of running two tickers against the same state.
+     */
+    private fun startRest(seconds: Int) {
+        restJob?.cancel()
+        _restRemainingSeconds.value = seconds
+        restJob = viewModelScope.launch {
+            while (true) {
+                delay(1000)
+                val next = (_restRemainingSeconds.value ?: 0) - 1
+                if (next <= 0) {
+                    _restRemainingSeconds.value = null
+                    break
+                }
+                _restRemainingSeconds.value = next
+            }
+        }
+    }
+
+    /** Skip the current rest countdown immediately — the user is ready to go again. */
+    fun skipRest() {
+        restJob?.cancel()
+        _restRemainingSeconds.value = null
+    }
+
+    /** Extend a running countdown by [extraSeconds] (default 30). No-op if none is running. */
+    fun addRestTime(extraSeconds: Int = 30) {
+        _restRemainingSeconds.value?.let { _restRemainingSeconds.value = it + extraSeconds }
     }
 
     /** Batch-submit all pending drafts. Idempotent — drafts persist across retries. */

@@ -52,6 +52,7 @@ fun CaptureScreen(
     val uiError by vm.uiError.collectAsStateWithLifecycle()
     val submitResult by vm.submitResult.collectAsStateWithLifecycle()
     val currentPlannedSetId by vm.currentPlannedSetId.collectAsStateWithLifecycle()
+    val restRemainingSeconds by vm.restRemainingSeconds.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { vm.load() }
@@ -70,7 +71,10 @@ fun CaptureScreen(
                             Text("No planned session — generate one.")
                         }
                     } else {
-                        SessionContent(session, currentPlannedSetId, uiError, submitResult, scope, vm)
+                        SessionContent(
+                            session, currentPlannedSetId, uiError, submitResult,
+                            restRemainingSeconds, scope, vm,
+                        )
                     }
                 }
             }
@@ -85,6 +89,7 @@ private fun SessionContent(
     currentPlannedSetId: Int?,
     uiError: String?,
     submitResult: String?,
+    restRemainingSeconds: Int?,
     scope: CoroutineScope,
     vm: CaptureViewModel,
 ) {
@@ -118,6 +123,19 @@ private fun SessionContent(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        // Rest countdown — auto-started by the VM on set-log (see restContextByPlannedSetId /
+        // shouldStartRest); shown only while a countdown is running.
+        restRemainingSeconds?.let { remaining ->
+            item(key = "rest-timer") {
+                RestTimerBar(
+                    remainingSeconds = remaining,
+                    onSkip = vm::skipRest,
+                    onAddTime = { vm.addRestTime(30) },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            }
         }
 
         session.groups.forEachIndexed { gi, group ->
