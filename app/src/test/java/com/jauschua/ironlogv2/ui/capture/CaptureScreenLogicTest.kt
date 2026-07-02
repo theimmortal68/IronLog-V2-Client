@@ -6,17 +6,15 @@ import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import com.jauschua.ironlogv2.ui.screens.capture.formatRepsTarget
-import com.jauschua.ironlogv2.ui.screens.capture.isAssistedSet
 import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
 import com.jauschua.ironlogv2.ui.screens.capture.prefillReps
 import com.jauschua.ironlogv2.ui.screens.capture.prefillWeight
+import com.jauschua.ironlogv2.ui.screens.capture.repsInputLabel
 import com.jauschua.ironlogv2.ui.screens.capture.repsTargetLabel
 import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -99,59 +97,77 @@ class CaptureScreenLogicTest {
         assertNull(perSideLabel(false))
     }
 
-    // ── phased pull-up (D4/D6): Set 1 AMRAP blank, Sets 2-3 assisted pair ────────────────
+    // ── reps INPUT pre-fill: numeric-only default so tap-without-edit never logs null ────
+    // (fixed target → the number; range target → the low end; full range shown separately
+    // via repsInputLabel, not baked into the editable value).
 
     @Test
-    fun isAssistedSet_true_when_either_target_present() {
-        val unassistedOnly = PlannedSetOut(
+    fun prefillReps_fixed_target_prefills_the_number() {
+        val fixed = PlannedSetOut(
             id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
-            target_unassisted_reps = 8,
+            target_reps_low = 8, target_reps_high = 8,
         )
-        val assistedOnly = PlannedSetOut(
-            id = 2, set_index = 1, set_role = "BACKOFF", is_warmup = false,
-            target_assisted_reps = 4,
-        )
-        val neither = PlannedSetOut(id = 3, set_index = 0, set_role = "WORKING", is_warmup = false)
-
-        assertTrue(isAssistedSet(unassistedOnly))
-        assertTrue(isAssistedSet(assistedOnly))
-        assertFalse(isAssistedSet(neither))
+        assertEquals("8", prefillReps(fixed))
     }
 
     @Test
-    fun prefillReps_set1_amrap_is_blank_for_assisted_exercise() {
-        val amrapSet1 = PlannedSetOut(
-            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
-            target_unassisted_reps = 8, // set 1 is still identified as belonging to the assisted scheme
+    fun prefillReps_range_target_prefills_the_low_end() {
+        val range = PlannedSetOut(
+            id = 2, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 12,
         )
-        assertEquals("", prefillReps(amrapSet1))
+        assertEquals("8", prefillReps(range))
     }
 
     @Test
-    fun repsTargetLabel_set1_shows_amrap_for_assisted_exercise() {
-        val amrapSet1 = PlannedSetOut(
-            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
-            target_unassisted_reps = 8,
-        )
-        assertEquals("AMRAP", repsTargetLabel(amrapSet1))
+    fun prefillReps_blank_when_no_reps_target() {
+        val noTarget = PlannedSetOut(id = 3, set_index = 0, set_role = "WORKING", is_warmup = false)
+        assertEquals("", prefillReps(noTarget))
     }
 
     @Test
-    fun prefillReps_backoff_sets_show_unassisted_assisted_pair() {
-        val backoff = PlannedSetOut(
-            id = 2, set_index = 1, set_role = "BACKOFF", is_warmup = false,
+    fun repsInputLabel_shows_full_range_next_to_the_numeric_prefill() {
+        val range = PlannedSetOut(
+            id = 2, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 12,
+        )
+        assertEquals("Reps (8-12)", repsInputLabel(range))
+    }
+
+    @Test
+    fun repsInputLabel_plain_for_fixed_target() {
+        val fixed = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 8,
+        )
+        assertEquals("Reps", repsInputLabel(fixed))
+    }
+
+    // ── assisted movements (e.g. pull-ups) render the STANDARD target ────────────────────
+    // The phased pull-up AMRAP / assisted-pair widget is DEFERRED — the server never populates
+    // target_unassisted_reps/target_assisted_reps on PlannedSetOut (confirmed), so the client no
+    // longer branches on them. This guards against a regression to that dead code path even if
+    // those fields happen to be present (they mirror the server's DTO field-for-field but the
+    // server never writes them today).
+
+    @Test
+    fun repsTargetLabel_assisted_movement_shows_standard_target_not_phased_phrasing() {
+        val assistedMovement = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_load = 20.0, target_reps_low = 6, target_reps_high = 6,
             target_unassisted_reps = 8, target_assisted_reps = 4,
         )
-        assertEquals("8/4", prefillReps(backoff))
+        assertEquals("6 reps", repsTargetLabel(assistedMovement))
     }
 
     @Test
-    fun repsTargetLabel_backoff_sets_show_unassisted_assisted_pair() {
-        val backoff = PlannedSetOut(
-            id = 2, set_index = 1, set_role = "BACKOFF", is_warmup = false,
+    fun prefillReps_assisted_movement_prefills_the_standard_numeric_target() {
+        val assistedMovement = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_load = 20.0, target_reps_low = 6, target_reps_high = 6,
             target_unassisted_reps = 8, target_assisted_reps = 4,
         )
-        assertEquals("8 unassisted / 4 assisted", repsTargetLabel(backoff))
+        assertEquals("6", prefillReps(assistedMovement))
     }
 
     // ── MUST-FIX: pastIds from the ROUND-MAJOR flatten, not a screen-local exercise-major one ──

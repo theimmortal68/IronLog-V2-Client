@@ -269,8 +269,9 @@ private fun SetCard(
                 }
             }
 
-            // Target prescription — weight + reps (single number when fixed, range otherwise;
-            // AMRAP / assisted-pair phrasing for phased pull-up sets via isAssistedSet).
+            // Target prescription — weight + reps (single number when fixed, range otherwise).
+            // The phased pull-up AMRAP/assisted-pair widget is DEFERRED (server never populates
+            // target_unassisted_reps/target_assisted_reps) — see repsTargetLabel's doc comment.
             val weightTarget = plannedSet.target_load?.let { "${formatWeight(it)}lb" }
             val repsTarget = repsTargetLabel(plannedSet).takeIf { it.isNotEmpty() }
             val target = listOfNotNull(weightTarget, repsTarget).joinToString(" ")
@@ -302,11 +303,7 @@ private fun SetCard(
 
             // Input controls for the current set only
             if (isCurrent) {
-                val repsLabel = if (isAssistedSet(plannedSet) && plannedSet.set_index == 0) {
-                    "Reps (AMRAP)"
-                } else {
-                    "Reps"
-                }
+                val repsLabel = repsInputLabel(plannedSet)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = setLoad,
@@ -386,46 +383,42 @@ internal fun formatRepsTarget(low: Int?, high: Int?): String = when {
     else -> ""
 }
 
-/** `"Target: ... 8 reps"` / `"... 8-12 reps"` display phrasing, or `"AMRAP"` / the assisted pair
- * for phased pull-up sets (see [isAssistedSet]). Blank when there is no reps target at all. */
-internal fun repsTargetLabel(plannedSet: PlannedSetOut): String = when {
-    isAssistedSet(plannedSet) && plannedSet.set_index == 0 -> "AMRAP"
-    isAssistedSet(plannedSet) -> buildString {
-        plannedSet.target_unassisted_reps?.let { append("$it unassisted") }
-        if (plannedSet.target_unassisted_reps != null && plannedSet.target_assisted_reps != null) {
-            append(" / ")
-        }
-        plannedSet.target_assisted_reps?.let { append("$it assisted") }
-    }
-    else -> formatRepsTarget(plannedSet.target_reps_low, plannedSet.target_reps_high)
+/**
+ * `"Target: ... 8 reps"` / `"... 8-12 reps"` display phrasing. Blank when there is no reps
+ * target at all.
+ *
+ * The phased pull-up AMRAP / "X unassisted / Y assisted" widget is DEFERRED — the server never
+ * populates `target_unassisted_reps` / `target_assisted_reps` on `PlannedSetOut` (confirmed), so
+ * this intentionally does not branch on them. Assisted movements (e.g. pull-ups) fall through to
+ * the standard reps target the server actually sends. The DTO fields stay defined for the future
+ * server-side phased population + rich widget; the client just no longer depends on them.
+ */
+internal fun repsTargetLabel(plannedSet: PlannedSetOut): String =
+    formatRepsTarget(plannedSet.target_reps_low, plannedSet.target_reps_high)
         .let { if (it.isEmpty()) "" else "$it reps" }
+
+/**
+ * Reps INPUT pre-fill — a numeric, directly-loggable default so tapping "Log set" without
+ * editing records a real number, never null (`toIntOrNull()` on a non-numeric string like
+ * `"8-12"` used to return null here). Fixed target (`low == high`): the number itself. Range
+ * target: the LOW end, as a sensible starting default the lifter can adjust upward. Blank only
+ * when neither bound is present. The full range stays visible via [repsInputLabel] (field label)
+ * and [repsTargetLabel] (the "Target: ..." line above) — this function must stay numeric-only.
+ */
+internal fun prefillReps(plannedSet: PlannedSetOut): String = when {
+    plannedSet.target_reps_low != null -> "${plannedSet.target_reps_low}"
+    plannedSet.target_reps_high != null -> "${plannedSet.target_reps_high}"
+    else -> ""
 }
 
 /**
- * True when [plannedSet] belongs to an assisted-progression exercise (phased pull-up pattern,
- * D4/D6): it carries a target for unassisted and/or assisted reps. There is no `assist_level`
- * field on the session DTO (that name only exists server-side on `MovementState`, used for
- * generation load-trust, and is never serialized into `/sessions/{id}`) — the per-set
- * `target_unassisted_reps` / `target_assisted_reps` pair already mirrors the server's
- * `schemas_capture.PlannedSetOut` field-for-field and is the actual signal available here.
+ * Reps input field label — `"Reps"` for a fixed target, `"Reps (8-12)"` for a range so the full
+ * target stays visible next to the numeric-only pre-fill in [prefillReps].
  */
-internal fun isAssistedSet(plannedSet: PlannedSetOut): Boolean =
-    plannedSet.target_unassisted_reps != null || plannedSet.target_assisted_reps != null
-
-/**
- * Reps input pre-fill. Phased pull-up Set 1 (`set_index == 0`) is unassisted AMRAP — blank, the
- * lifter enters what they got. Sets 2-3 pre-fill with the `{unassisted, assisted}` pair as
- * `"8/4"` (minimal — no rich two-field widget, deferred); like the plain range case below
- * (`"8-12"`), this is a textual target the lifter overwrites with the actual number before
- * logging, not a directly-loggable value. Non-assisted sets use [formatRepsTarget].
- */
-internal fun prefillReps(plannedSet: PlannedSetOut): String = when {
-    isAssistedSet(plannedSet) && plannedSet.set_index == 0 -> ""
-    isAssistedSet(plannedSet) -> listOfNotNull(
-        plannedSet.target_unassisted_reps,
-        plannedSet.target_assisted_reps,
-    ).joinToString("/")
-    else -> formatRepsTarget(plannedSet.target_reps_low, plannedSet.target_reps_high)
+internal fun repsInputLabel(plannedSet: PlannedSetOut): String {
+    val low = plannedSet.target_reps_low
+    val high = plannedSet.target_reps_high
+    return if (low != null && high != null && low != high) "Reps ($low-$high)" else "Reps"
 }
 
 /** Drops a trailing ".0" so weight/RPE display as "135" rather than "135.0". */
