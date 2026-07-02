@@ -29,11 +29,15 @@ class GenerateRepo(private val apiClient: ApiClient) {
         }.body()
     }
 
-    suspend fun history(): Result<List<SessionSummary>> = runCatchingApi {
+    suspend fun programDays(programId: Int): Result<List<String>> = runCatchingApi {
+        apiClient.http.get("/programs/$programId/days").body()
+    }
+
+    suspend fun pastSessions(): Result<List<SessionSummary>> = runCatchingApi {
         apiClient.http.get("/sessions").body()
     }
 
-    suspend fun logs(sessionId: Int): Result<LoggedSetsResponse> = runCatchingApi {
-        apiClient.http.get("/sessions/$sessionId/logs").body()
+    suspend fun sessionLogs(id: Int): Result<LoggedSetsResponse> = runCatchingApi {
+        apiClient.http.get("/sessions/$id/logs").body()
     }
 }
