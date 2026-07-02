@@ -88,21 +88,22 @@ private fun SessionContent(
     scope: CoroutineScope,
     vm: CaptureViewModel,
 ) {
-    // Flattened prescription for cursor-position queries (stable as long as session doesn't change).
-    val flatSets = remember(session) {
-        session.groups.flatMap { g -> g.exercises.flatMap { it.planned_sets } }
-    }
-    // IDs of sets that appear BEFORE the cursor in the flat order — rendered with "✓".
-    // When currentPlannedSetId is null (all done), cursorIdx = flatSets.size → all are past.
-    val pastIds = remember(session, currentPlannedSetId) {
-        val cursorIdx = flatSets.indexOfFirst { it.id == currentPlannedSetId }
-            .let { if (it < 0) flatSets.size else it }
-        flatSets.take(cursorIdx).map { it.id }.toSet()
-    }
+    // Flattened prescription for cursor-position queries (stable as long as session doesn't
+    // change). MUST reuse the VM's flattenPrescription — GIANT_SET groups are round-major there
+    // (one set per exercise per round), so a screen-local exercise-major re-derivation would
+    // disagree with the cursor and mis-render past/checkmark state for supersets. See
+    // flattenPrescription's doc comment in CaptureViewModel.kt.
+    val flatSets = remember(session) { flattenPrescription(session.groups) }
+    // IDs of sets that appear BEFORE the cursor in the flat (round-major) order — rendered "✓".
+    val pastIds = remember(session, currentPlannedSetId) { pastSetIds(flatSets, currentPlannedSetId) }
+    // The planned set the cursor currently points at — source of the pre-fill defaults below.
+    val currentSet = remember(session, currentPlannedSetId) { flatSets.find { it.id == currentPlannedSetId } }
 
-    // Input state for the current set; auto-resets when the cursor advances.
-    var setLoad by remember(currentPlannedSetId) { mutableStateOf("") }
-    var setReps by remember(currentPlannedSetId) { mutableStateOf("") }
+    // Input state for the current set; auto-resets (and re-pre-fills) when the cursor advances.
+    // Weight/reps default to the prescription target — the lifter can accept or adjust before
+    // logging ("log = accept or adjust").
+    var setLoad by remember(currentPlannedSetId) { mutableStateOf(prefillWeight(currentSet?.target_load)) }
+    var setReps by remember(currentPlannedSetId) { mutableStateOf(currentSet?.let(::prefillReps) ?: "") }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
 
     LazyColumn(
@@ -146,6 +147,7 @@ private fun SessionContent(
                     item(key = "set-${plannedSet.id}") {
                         SetCard(
                             plannedSet = plannedSet,
+                            unilateral = exercise.unilateral,
                             isCurrent = isCurrent,
                             isPast = isPast,
                             tapRequired = tapRequired,
@@ -210,6 +212,7 @@ private fun SessionContent(
 @Composable
 private fun SetCard(
     plannedSet: PlannedSetOut,
+    unilateral: Boolean,
     isCurrent: Boolean,
     isPast: Boolean,
     tapRequired: Boolean,
@@ -248,17 +251,11 @@ private fun SetCard(
                 }
             }
 
-            // Target prescription
-            val target = buildString {
-                plannedSet.target_load?.let { append("${it}lb ") }
-                val lo = plannedSet.target_reps_low
-                val hi = plannedSet.target_reps_high
-                when {
-                    lo != null && hi != null && lo != hi -> append("${lo}-${hi} reps")
-                    lo != null -> append("${lo} reps")
-                    hi != null -> append("${hi} reps")
-                }
-            }.trim()
+            // Target prescription — weight + reps (single number when fixed, range otherwise;
+            // AMRAP / assisted-pair phrasing for phased pull-up sets via isAssistedSet).
+            val weightTarget = plannedSet.target_load?.let { "${formatWeight(it)}lb" }
+            val repsTarget = repsTargetLabel(plannedSet).takeIf { it.isNotEmpty() }
+            val target = listOfNotNull(weightTarget, repsTarget).joinToString(" ")
             if (target.isNotEmpty()) {
                 Text(
                     text = "Target: $target",
@@ -267,8 +264,31 @@ private fun SetCard(
                 )
             }
 
+            // RPE — shown prominently; for fixed-rep lifts this is the real progression signal.
+            rpeLabel(plannedSet.target_rpe)?.let { rpe ->
+                Text(
+                    text = rpe,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            // Unilateral affordance — label the set "per side" clearly.
+            perSideLabel(unilateral)?.let { label ->
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+
             // Input controls for the current set only
             if (isCurrent) {
+                val repsLabel = if (isAssistedSet(plannedSet) && plannedSet.set_index == 0) {
+                    "Reps (AMRAP)"
+                } else {
+                    "Reps"
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = setLoad,
@@ -281,7 +301,7 @@ private fun SetCard(
                     OutlinedTextField(
                         value = setReps,
                         onValueChange = onRepsChange,
-                        label = { Text("Reps") },
+                        label = { Text(repsLabel) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         modifier = Modifier.weight(1f),
@@ -317,3 +337,89 @@ private fun SetCard(
         }
     }
 }
+
+// ── Pure display/pre-fill logic (extracted so Compose UI, which can't be unit-tested here, ────
+//    stays a thin wrapper around testable functions) ────────────────────────────────────────
+
+/**
+ * IDs of every [PlannedSetOut] that appears BEFORE the cursor in [flatSets] — rendered "✓" by
+ * [SessionContent]. `flatSets` MUST come from [flattenPrescription] (round-major for GIANT_SET,
+ * exercise-major for STRAIGHT) so this agrees with the VM's actual logging cursor; see the
+ * must-fix note on [flattenPrescription] in CaptureViewModel.kt. When [currentPlannedSetId] is
+ * null (all done) or not found, every set in [flatSets] is past.
+ */
+internal fun pastSetIds(flatSets: List<PlannedSetOut>, currentPlannedSetId: Int?): Set<Int> {
+    val cursorIdx = flatSets.indexOfFirst { it.id == currentPlannedSetId }
+        .let { if (it < 0) flatSets.size else it }
+    return flatSets.take(cursorIdx).map { it.id }.toSet()
+}
+
+/**
+ * Reps target as a compact number: `"8"` when [low] == [high] (fixed-rep lift), `"8-12"` for a
+ * range. Falls back to whichever bound is present if only one is set; blank when both are null.
+ * Used both for the input pre-fill (single-number case is directly loggable as-is) and, suffixed
+ * with " reps", for the target display line.
+ */
+internal fun formatRepsTarget(low: Int?, high: Int?): String = when {
+    low != null && high != null && low == high -> "$low"
+    low != null && high != null -> "$low-$high"
+    low != null -> "$low"
+    high != null -> "$high"
+    else -> ""
+}
+
+/** `"Target: ... 8 reps"` / `"... 8-12 reps"` display phrasing, or `"AMRAP"` / the assisted pair
+ * for phased pull-up sets (see [isAssistedSet]). Blank when there is no reps target at all. */
+internal fun repsTargetLabel(plannedSet: PlannedSetOut): String = when {
+    isAssistedSet(plannedSet) && plannedSet.set_index == 0 -> "AMRAP"
+    isAssistedSet(plannedSet) -> buildString {
+        plannedSet.target_unassisted_reps?.let { append("$it unassisted") }
+        if (plannedSet.target_unassisted_reps != null && plannedSet.target_assisted_reps != null) {
+            append(" / ")
+        }
+        plannedSet.target_assisted_reps?.let { append("$it assisted") }
+    }
+    else -> formatRepsTarget(plannedSet.target_reps_low, plannedSet.target_reps_high)
+        .let { if (it.isEmpty()) "" else "$it reps" }
+}
+
+/**
+ * True when [plannedSet] belongs to an assisted-progression exercise (phased pull-up pattern,
+ * D4/D6): it carries a target for unassisted and/or assisted reps. There is no `assist_level`
+ * field on the session DTO (that name only exists server-side on `MovementState`, used for
+ * generation load-trust, and is never serialized into `/sessions/{id}`) — the per-set
+ * `target_unassisted_reps` / `target_assisted_reps` pair already mirrors the server's
+ * `schemas_capture.PlannedSetOut` field-for-field and is the actual signal available here.
+ */
+internal fun isAssistedSet(plannedSet: PlannedSetOut): Boolean =
+    plannedSet.target_unassisted_reps != null || plannedSet.target_assisted_reps != null
+
+/**
+ * Reps input pre-fill. Phased pull-up Set 1 (`set_index == 0`) is unassisted AMRAP — blank, the
+ * lifter enters what they got. Sets 2-3 pre-fill with the `{unassisted, assisted}` pair as
+ * `"8/4"` (minimal — no rich two-field widget, deferred); like the plain range case below
+ * (`"8-12"`), this is a textual target the lifter overwrites with the actual number before
+ * logging, not a directly-loggable value. Non-assisted sets use [formatRepsTarget].
+ */
+internal fun prefillReps(plannedSet: PlannedSetOut): String = when {
+    isAssistedSet(plannedSet) && plannedSet.set_index == 0 -> ""
+    isAssistedSet(plannedSet) -> listOfNotNull(
+        plannedSet.target_unassisted_reps,
+        plannedSet.target_assisted_reps,
+    ).joinToString("/")
+    else -> formatRepsTarget(plannedSet.target_reps_low, plannedSet.target_reps_high)
+}
+
+/** Drops a trailing ".0" so weight/RPE display as "135" rather than "135.0". */
+internal fun formatWeight(value: Double): String =
+    if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
+
+/** Weight input pre-fill — [targetLoad] as an editable default; blank when null
+ * (needs-calibration: no floor to prefill). */
+internal fun prefillWeight(targetLoad: Double?): String = targetLoad?.let(::formatWeight) ?: ""
+
+/** `"RPE 8"` / `"RPE 7.5"` prominent label, or null when the set carries no RPE target. */
+internal fun rpeLabel(rpe: Double?): String? = rpe?.let { "RPE ${formatWeight(it)}" }
+
+/** `"Per side"` affordance for a unilateral exercise's set, or null for bilateral exercises. */
+internal fun perSideLabel(unilateral: Boolean): String? = if (unilateral) "Per side" else null
