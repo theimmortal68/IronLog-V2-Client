@@ -1,0 +1,263 @@
+// CaptureScreenLogicTest.kt
+package com.jauschua.ironlogv2.ui.capture
+
+import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
+import com.jauschua.ironlogv2.data.api.dto.GroupOut
+import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
+import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
+import com.jauschua.ironlogv2.ui.screens.capture.formatRepsTarget
+import com.jauschua.ironlogv2.ui.screens.capture.groupProgressHint
+import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
+import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
+import com.jauschua.ironlogv2.ui.screens.capture.prefillReps
+import com.jauschua.ironlogv2.ui.screens.capture.prefillWeight
+import com.jauschua.ironlogv2.ui.screens.capture.repsInputLabel
+import com.jauschua.ironlogv2.ui.screens.capture.repsTargetLabel
+import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * Task 5 — pure display/pre-fill logic for CaptureScreen, plus the Task 4 must-fix
+ * (checkmark/"past" derivation must reuse the VM's round-major [flattenPrescription], not a
+ * screen-local exercise-major re-derivation).
+ *
+ * Compose composables (SetCard, SessionContent) are not unit-tested here — the logic they render
+ * is extracted into the plain functions under test, per the task brief.
+ */
+class CaptureScreenLogicTest {
+
+    // ── weight pre-fill: target_load as an editable default ─────────────────────────────
+
+    @Test
+    fun prefillWeight_uses_target_load_as_editable_default() {
+        assertEquals("135", prefillWeight(135.0))
+        assertEquals("137.5", prefillWeight(137.5))
+    }
+
+    @Test
+    fun prefillWeight_blank_when_target_load_null_needs_calibration() {
+        assertEquals("", prefillWeight(null))
+    }
+
+    // ── reps display: single number vs range ─────────────────────────────────────────────
+
+    @Test
+    fun formatRepsTarget_single_number_when_low_equals_high() {
+        assertEquals("8", formatRepsTarget(8, 8))
+    }
+
+    @Test
+    fun formatRepsTarget_range_when_low_differs_from_high() {
+        assertEquals("8-12", formatRepsTarget(8, 12))
+    }
+
+    @Test
+    fun formatRepsTarget_blank_when_both_null() {
+        assertEquals("", formatRepsTarget(null, null))
+    }
+
+    @Test
+    fun repsTargetLabel_appends_reps_suffix_for_display() {
+        val fixed = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 8,
+        )
+        assertEquals("8 reps", repsTargetLabel(fixed))
+
+        val range = PlannedSetOut(
+            id = 2, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 12,
+        )
+        assertEquals("8-12 reps", repsTargetLabel(range))
+    }
+
+    // ── RPE shown prominently — the real progression signal for fixed-rep lifts ─────────
+
+    @Test
+    fun rpeLabel_formats_target_rpe() {
+        assertEquals("RPE 8", rpeLabel(8.0))
+        assertEquals("RPE 7.5", rpeLabel(7.5))
+    }
+
+    @Test
+    fun rpeLabel_null_when_no_target_rpe() {
+        assertNull(rpeLabel(null))
+    }
+
+    // ── unilateral "per side" affordance ─────────────────────────────────────────────────
+
+    @Test
+    fun perSideLabel_present_for_unilateral_exercise() {
+        assertEquals("Per side", perSideLabel(true))
+    }
+
+    @Test
+    fun perSideLabel_absent_for_bilateral_exercise() {
+        assertNull(perSideLabel(false))
+    }
+
+    // ── reps INPUT pre-fill: numeric-only default so tap-without-edit never logs null ────
+    // (fixed target → the number; range target → the low end; full range shown separately
+    // via repsInputLabel, not baked into the editable value).
+
+    @Test
+    fun prefillReps_fixed_target_prefills_the_number() {
+        val fixed = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 8,
+        )
+        assertEquals("8", prefillReps(fixed))
+    }
+
+    @Test
+    fun prefillReps_range_target_prefills_the_low_end() {
+        val range = PlannedSetOut(
+            id = 2, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 12,
+        )
+        assertEquals("8", prefillReps(range))
+    }
+
+    @Test
+    fun prefillReps_blank_when_no_reps_target() {
+        val noTarget = PlannedSetOut(id = 3, set_index = 0, set_role = "WORKING", is_warmup = false)
+        assertEquals("", prefillReps(noTarget))
+    }
+
+    @Test
+    fun repsInputLabel_shows_full_range_next_to_the_numeric_prefill() {
+        val range = PlannedSetOut(
+            id = 2, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 12,
+        )
+        assertEquals("Reps (8-12)", repsInputLabel(range))
+    }
+
+    @Test
+    fun repsInputLabel_plain_for_fixed_target() {
+        val fixed = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 8,
+        )
+        assertEquals("Reps", repsInputLabel(fixed))
+    }
+
+    // ── assisted movements (e.g. pull-ups) render the STANDARD target ────────────────────
+    // The phased pull-up AMRAP / assisted-pair widget is DEFERRED — the server never populates
+    // target_unassisted_reps/target_assisted_reps on PlannedSetOut (confirmed), so the client no
+    // longer branches on them. This guards against a regression to that dead code path even if
+    // those fields happen to be present (they mirror the server's DTO field-for-field but the
+    // server never writes them today).
+
+    @Test
+    fun repsTargetLabel_assisted_movement_shows_standard_target_not_phased_phrasing() {
+        val assistedMovement = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_load = 20.0, target_reps_low = 6, target_reps_high = 6,
+            target_unassisted_reps = 8, target_assisted_reps = 4,
+        )
+        assertEquals("6 reps", repsTargetLabel(assistedMovement))
+    }
+
+    @Test
+    fun prefillReps_assisted_movement_prefills_the_standard_numeric_target() {
+        val assistedMovement = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_load = 20.0, target_reps_low = 6, target_reps_high = 6,
+            target_unassisted_reps = 8, target_assisted_reps = 4,
+        )
+        assertEquals("6", prefillReps(assistedMovement))
+    }
+
+    // ── MUST-FIX: pastIds from the ROUND-MAJOR flatten, not a screen-local exercise-major one ──
+
+    /**
+     * A GIANT_SET group (3 exercises x 3 rounds) — after round 1 is fully logged, the cursor
+     * sits at the first exercise of round 2 (id 101). All THREE round-1 sets (one per exercise:
+     * 100, 200, 300) must show as past/checkmarked, because the VM's cursor walks round-major
+     * (see [flattenPrescription]'s doc comment). The bug this guards against: CaptureScreen used
+     * to build its OWN exercise-major flatten (`g.exercises.flatMap { it.planned_sets }`), under
+     * which the round-major id order [100,200,300,101,201,301,102,202,302] gets computed as
+     * [100,101,102,200,201,202,300,301,302] instead — the cursor id 101 lands at index 1 in that
+     * ordering, so pastSetIds would wrongly return only {100}, dropping exercise-2's and
+     * exercise-3's already-logged round-1 sets. `pastSetIds` here is built on the shared
+     * `flattenPrescription`, so it gets the round-major answer.
+     */
+    @Test
+    fun pastSetIds_marks_all_round1_sets_past_after_round1_in_giant_set() {
+        fun exercise(id: Int, idBase: Int, rounds: Int) = ExerciseOut(
+            id = id, movement_id = id, movement_name = "ex$id", order_index = id,
+            scheme = "STRAIGHT", objective = "",
+            planned_sets = (0 until rounds).map { r ->
+                PlannedSetOut(id = idBase + r, set_index = r, set_role = "WORKING", is_warmup = false)
+            },
+        )
+        val e1 = exercise(id = 1, idBase = 100, rounds = 3)
+        val e2 = exercise(id = 2, idBase = 200, rounds = 3)
+        val e3 = exercise(id = 3, idBase = 300, rounds = 3)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "GIANT_SET", rounds = 3,
+            exercises = listOf(e1, e2, e3),
+        )
+        val flat = flattenPrescription(listOf(group)) // round-major: [100,200,300,101,201,301,102,202,302]
+
+        val past = pastSetIds(flat, currentPlannedSetId = 101)
+
+        assertEquals(setOf(100, 200, 300), past)
+    }
+
+    // ── groupProgressHint: collapsed-card progress ("k/N sets" or "✓ done") ──────────────
+
+    private fun groupWithSetIds(setIds: List<Int>): GroupOut {
+        val exercise = ExerciseOut(
+            id = 1, movement_id = 1, movement_name = "ex1", order_index = 0,
+            scheme = "STRAIGHT", objective = "",
+            planned_sets = setIds.mapIndexed { i, sid ->
+                PlannedSetOut(id = sid, set_index = i, set_role = "WORKING", is_warmup = false)
+            },
+        )
+        return GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = setIds.size,
+            exercises = listOf(exercise),
+        )
+    }
+
+    @Test
+    fun groupProgressHint_none_logged_shows_zero_of_total() {
+        val group = groupWithSetIds(listOf(10, 11, 12))
+        assertEquals("0/3 sets", groupProgressHint(group, pastIds = emptySet()))
+    }
+
+    @Test
+    fun groupProgressHint_some_logged_shows_logged_of_total() {
+        val group = groupWithSetIds(listOf(10, 11, 12))
+        assertEquals("2/3 sets", groupProgressHint(group, pastIds = setOf(10, 11)))
+    }
+
+    @Test
+    fun groupProgressHint_all_logged_shows_done() {
+        val group = groupWithSetIds(listOf(10, 11, 12))
+        assertEquals("✓ done", groupProgressHint(group, pastIds = setOf(10, 11, 12)))
+    }
+
+    @Test
+    fun groupProgressHint_empty_group_is_not_done() {
+        val group = groupWithSetIds(emptyList())
+        assertEquals("0/0 sets", groupProgressHint(group, pastIds = emptySet()))
+    }
+
+    @Test
+    fun pastSetIds_all_past_when_cursor_is_null_all_done() {
+        val e1 = ExerciseOut(
+            id = 1, movement_id = 1, movement_name = "ex1", order_index = 0,
+            scheme = "STRAIGHT", objective = "",
+            planned_sets = listOf(PlannedSetOut(id = 1, set_index = 0, set_role = "WORKING", is_warmup = false)),
+        )
+        val group = GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1, exercises = listOf(e1))
+        val flat = flattenPrescription(listOf(group))
+
+        assertEquals(setOf(1), pastSetIds(flat, currentPlannedSetId = null))
+    }
+}
