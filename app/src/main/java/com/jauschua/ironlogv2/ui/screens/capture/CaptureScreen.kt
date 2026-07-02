@@ -140,7 +140,7 @@ private fun SessionContent(
     var prevRest by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(restRemainingSeconds) {
         when (val remaining = restRemainingSeconds) {
-            10 -> toneCue.warning()
+            15 -> toneCue.warning()
             3, 2, 1 -> toneCue.tick()
             null -> if (prevRest == 1) toneCue.done()
             else -> {}

@@ -22,7 +22,8 @@ import kotlin.math.sin
  * avoid click/pop artifacts.
  *
  * Three audibly distinct cues, driven off the countdown value in [SessionContent]:
- * - [warning]: 900 Hz, 450 ms — a longer, prominent alert at the 10s mark.
+ * - [warning]: a 900 Hz TRIPLE beep (three 150 ms beeps, 80 ms gaps) at the 15s mark — the
+ *   triple pattern (not pitch) is what makes it distinct from the single-beep ticks.
  * - [tick]: 1000 Hz, 150 ms — a short beep on each of the final 3s.
  * - [done]: a HIGHER-pitched 1550 Hz double beep (two 120 ms beeps, 80 ms gap) when the rest
  *   completes, signalling "start" — distinctly higher than [warning]/[tick] per user feedback.
@@ -35,9 +36,9 @@ internal class RestToneCue {
     /** The most recently played track, held so [release] (and the next cue) can free it. */
     private var currentTrack: AudioTrack? = null
 
-    /** 10-second mark — loud, prominent 900 Hz warning tone. */
+    /** 15-second mark — a loud, prominent 900 Hz triple beep (distinct from the single ticks). */
     fun warning() {
-        play(sine(WARNING_HZ, WARNING_MS))
+        play(beeps(WARNING_HZ, WARNING_BEEP_MS, WARNING_GAP_MS, WARNING_BEEP_COUNT))
     }
 
     /** Final 3-2-1 countdown — a short 1000 Hz beep each, distinct from (shorter than) [warning]. */
@@ -47,7 +48,7 @@ internal class RestToneCue {
 
     /** Rest over — a HIGHER-pitched 1550 Hz double beep so the lifter knows to start. */
     fun done() {
-        play(doubleBeep(DONE_HZ, DONE_BEEP_MS, DONE_GAP_MS))
+        play(beeps(DONE_HZ, DONE_BEEP_MS, DONE_GAP_MS, DONE_BEEP_COUNT))
     }
 
     /** Stop and free any held [AudioTrack]. Safe to call repeatedly (e.g. from `onDispose`). */
@@ -112,16 +113,17 @@ internal class RestToneCue {
     }
 
     /**
-     * Two [sine] beeps at [freqHz] of [beepMs] each, separated by [gapMs] of silence, as one
-     * contiguous waveform — so the whole double-beep plays from a single MODE_STATIC write with
-     * no main-thread sleep between beeps.
+     * [count] [sine] beeps at [freqHz] of [beepMs] each, separated by [gapMs] of silence, as one
+     * contiguous waveform — so the whole multi-beep plays from a single MODE_STATIC write with no
+     * main-thread sleep between beeps. Used for both the triple warning and the double done cue.
      */
-    private fun doubleBeep(freqHz: Double, beepMs: Int, gapMs: Int): ShortArray {
+    private fun beeps(freqHz: Double, beepMs: Int, gapMs: Int, count: Int): ShortArray {
         val beep = sine(freqHz, beepMs)
         val gap = (SAMPLE_RATE.toLong() * gapMs / 1000L).toInt()
-        val out = ShortArray(beep.size * 2 + gap)
-        beep.copyInto(out, 0)
-        beep.copyInto(out, beep.size + gap)
+        val out = ShortArray(beep.size * count + gap * (count - 1))
+        for (n in 0 until count) {
+            beep.copyInto(out, n * (beep.size + gap))
+        }
         return out
     }
 
@@ -129,12 +131,15 @@ internal class RestToneCue {
         const val SAMPLE_RATE = 44100
         const val FADE_MS = 5
         const val WARNING_HZ = 900.0
-        const val WARNING_MS = 450
+        const val WARNING_BEEP_MS = 150
+        const val WARNING_GAP_MS = 80
+        const val WARNING_BEEP_COUNT = 3
         const val TICK_HZ = 1000.0
         const val TICK_MS = 150
         const val DONE_HZ = 1550.0
         const val DONE_BEEP_MS = 120
         const val DONE_GAP_MS = 80
+        const val DONE_BEEP_COUNT = 2
     }
 }
 
