@@ -32,6 +32,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class ExerciseOut(
     val id: Int, val movement_id: Int, val movement_name: String, val order_index: Int,
     val scheme: String, val objective: String, val planned_sets: List<PlannedSetOut>,
+    val unilateral: Boolean = false,
 )
 @Serializable data class GroupOut(
     val id: Int, val order_index: Int, val group_type: String, val rounds: Int,

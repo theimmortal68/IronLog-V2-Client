@@ -5,6 +5,8 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.jauschua.ironlogv2.data.api.ApiClient
+import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
+import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.local.CaptureDao
 import com.jauschua.ironlogv2.data.local.CaptureDatabase
@@ -13,6 +15,7 @@ import com.jauschua.ironlogv2.data.local.SetLogDraft
 import com.jauschua.ironlogv2.data.local.SurveyDraft
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel
+import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
@@ -241,5 +244,94 @@ class CaptureViewModelTest {
         vm.logWorkingSet(plannedSetId = ps1_1.id, movementId = 2, setIndex = 1,
             setRole = "WORKING", actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
         assertNull("after E1S1 → end of prescription", vm.currentPlannedSetId.value)
+    }
+
+    // ── Task 4 — giant-set round-major sequencing ────────────────────────────────────────
+
+    private fun exercise(id: Int, idBase: Int, rounds: Int, unilateral: Boolean = false) = ExerciseOut(
+        id = id, movement_id = id, movement_name = "ex$id", order_index = id,
+        scheme = "STRAIGHT", objective = "", unilateral = unilateral,
+        planned_sets = (0 until rounds).map { r ->
+            PlannedSetOut(id = idBase + r, set_index = r, set_role = "WORKING", is_warmup = false)
+        },
+    )
+
+    /**
+     * GIANT_SET group (3 exercises × 3 rounds) flattens round-major: one set from each
+     * exercise per round, not all of exercise-1's sets before exercise-2's.
+     *
+     * RED-confirmed against the old exercise-major flatten
+     * (`g.exercises.flatMap { it.planned_sets }`): that would produce
+     * [100,101,102, 200,201,202, 300,301,302] instead of the expected round-major order.
+     */
+    @Test
+    fun giant_set_group_flattens_round_major() {
+        val e1 = exercise(id = 1, idBase = 100, rounds = 3)
+        val e2 = exercise(id = 2, idBase = 200, rounds = 3)
+        val e3 = exercise(id = 3, idBase = 300, rounds = 3)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "GIANT_SET", rounds = 3,
+            exercises = listOf(e1, e2, e3),
+        )
+        val flat = flattenPrescription(listOf(group))
+        assertEquals(
+            listOf(100, 200, 300, 101, 201, 301, 102, 202, 302),
+            flat.map { it.id },
+        )
+    }
+
+    /** STRAIGHT group stays exercise-major (unchanged behavior). */
+    @Test
+    fun straight_group_flattens_exercise_major() {
+        val e1 = exercise(id = 1, idBase = 10, rounds = 2)
+        val e2 = exercise(id = 2, idBase = 20, rounds = 2)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(e1, e2),
+        )
+        val flat = flattenPrescription(listOf(group))
+        assertEquals(listOf(10, 11, 20, 21), flat.map { it.id })
+    }
+
+    /**
+     * A unilateral exercise's planned set is ONE cursor unit covering both sides: the cursor
+     * must NOT skip to the next exercise after only one [CaptureViewModel.logWorkingSet] call —
+     * it holds on the same planned-set id until a second call (side 2) is logged.
+     */
+    @Test
+    fun unilateral_set_requires_both_sides_before_cursor_advances() = runBlocking {
+        val (repo, _) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val eUni = exercise(id = 1, idBase = 1, rounds = 1, unilateral = true) // planned_sets = [id=1]
+        val eNext = exercise(id = 2, idBase = 2, rounds = 1) // planned_sets = [id=2]
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(eUni, eNext),
+        )
+        vm.initPrescriptionForTestFromGroups(listOf(group))
+
+        assertEquals("cursor starts at the unilateral set", 1, vm.currentPlannedSetId.value)
+
+        // Side 1 (e.g. left)
+        vm.logWorkingSet(
+            plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 50.0, actualReps = 8, tap = "ON_TARGET",
+        )
+        assertEquals(
+            "cursor stays on the unilateral set after side 1 — must not skip to next exercise",
+            1,
+            vm.currentPlannedSetId.value,
+        )
+
+        // Side 2 (e.g. right)
+        vm.logWorkingSet(
+            plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 48.0, actualReps = 7, tap = "ON_TARGET",
+        )
+        assertEquals(
+            "cursor advances to the next exercise only once both sides are logged",
+            2,
+            vm.currentPlannedSetId.value,
+        )
     }
 }
