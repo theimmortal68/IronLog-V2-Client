@@ -37,6 +37,7 @@ sealed interface TodayUiState {
     data class HasPlanned(val session: SessionDetailResponse) : TodayUiState
     data class NoSession(val days: List<String>) : TodayUiState
     data object Generating : TodayUiState
+    data object Approving : TodayUiState
     data class Preview(val candidateId: String, val preview: SessionDetailResponse) : TodayUiState
     data class GenerateError(val msg: String) : TodayUiState
     data class Approved(val sessionId: Int) : TodayUiState
@@ -91,8 +92,10 @@ class TodayViewModel(
     fun approve() {
         val cur = _state.value
         if (cur !is TodayUiState.Preview) return
+        val candidateId = cur.candidateId
+        _state.value = TodayUiState.Approving
         viewModelScope.launch {
-            generateRepo.approve(cur.candidateId)
+            generateRepo.approve(candidateId)
                 .onSuccess { resp -> _state.value = TodayUiState.Approved(resp.session_id) }
                 .onFailure { e -> _state.value = TodayUiState.GenerateError(errorMessage(e)) }
         }

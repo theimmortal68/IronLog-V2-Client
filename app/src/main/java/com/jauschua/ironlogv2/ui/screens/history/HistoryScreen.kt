@@ -9,10 +9,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -25,19 +32,36 @@ import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 
 /** History tab: list of past completed sessions, tap to view logged actuals. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
     onOpen: (Int) -> Unit,
+    onBack: () -> Unit,
     vm: HistoryViewModel = viewModel(factory = HistoryViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
 
-    when (val s = state) {
-        is UiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("History") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+            )
+        },
+    ) { inner ->
+        Box(modifier = Modifier.fillMaxSize().padding(inner)) {
+            when (val s = state) {
+                is UiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                is UiState.Error -> ErrorRetryBox(s.msg) { vm.reload() }
+                is UiState.Success -> SessionListBody(s.data, onOpen)
+            }
         }
-        is UiState.Error -> ErrorRetryBox(s.msg) { vm.reload() }
-        is UiState.Success -> SessionListBody(s.data, onOpen)
     }
 }
 

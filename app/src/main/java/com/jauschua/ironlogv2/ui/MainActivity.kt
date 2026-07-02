@@ -162,13 +162,19 @@ private fun RootScaffold() {
                 )
             }
             composable(Routes.HISTORY) {
-                HistoryScreen(onOpen = { id -> nav.navigate(Routes.historyDetail(id)) })
+                HistoryScreen(
+                    onOpen = { id -> nav.navigate(Routes.historyDetail(id)) },
+                    onBack = { nav.popBackStack() },
+                )
             }
             composable(
                 route = Routes.HISTORY_DETAIL,
                 arguments = listOf(navArgument("id") { type = NavType.IntType }),
             ) { entry ->
-                HistoryDetailScreen(entry.arguments!!.getInt("id"))
+                HistoryDetailScreen(
+                    id = entry.arguments!!.getInt("id"),
+                    onBack = { nav.popBackStack() },
+                )
             }
         }
     }

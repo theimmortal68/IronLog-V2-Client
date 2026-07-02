@@ -66,7 +66,7 @@ fun TodayScreen(
     ) { inner ->
         Surface(modifier = Modifier.fillMaxSize().padding(inner)) {
             when (val s = state) {
-                is TodayUiState.Loading, is TodayUiState.Generating -> Centered {
+                is TodayUiState.Loading, is TodayUiState.Generating, is TodayUiState.Approving -> Centered {
                     CircularProgressIndicator()
                 }
                 is TodayUiState.HasPlanned -> HasPlannedContent(s.session, onContinue)
@@ -114,7 +114,7 @@ private fun NoSessionContent(days: List<String>, onGenerate: (String) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            items(days) { day ->
+            items(days, key = { it }) { day ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -144,7 +144,7 @@ private fun PreviewContent(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().weight(1f).padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
         ) {

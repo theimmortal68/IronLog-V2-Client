@@ -20,13 +20,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /** A single movement's logged sets from a session, grouped in first-appearance order. */
-data class MovementLogs(val movementName: String, val sets: List<LoggedSet>)
+data class MovementLogs(val movementId: Int, val movementName: String, val sets: List<LoggedSet>)
 
 /** Group flat logs by movement, preserving first-appearance order (linked map). */
 fun groupLogsByMovement(logs: List<LoggedSet>): List<MovementLogs> {
     val byMovement = LinkedHashMap<Int, MutableList<LoggedSet>>()
     for (l in logs) byMovement.getOrPut(l.movement_id) { mutableListOf() }.add(l)
-    return byMovement.values.map { MovementLogs(it.first().movement_name, it.toList()) }
+    return byMovement.values.map { MovementLogs(it.first().movement_id, it.first().movement_name, it.toList()) }
 }
 
 /** History list screen: past completed sessions. */
