@@ -34,6 +34,8 @@ import androidx.navigation.navArgument
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.ui.screens.bands.BandsScreen
 import com.jauschua.ironlogv2.ui.screens.capture.CaptureScreen
+import com.jauschua.ironlogv2.ui.screens.history.HistoryDetailScreen
+import com.jauschua.ironlogv2.ui.screens.history.HistoryScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
 import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
@@ -158,6 +160,15 @@ private fun RootScaffold() {
                         }
                     },
                 )
+            }
+            composable(Routes.HISTORY) {
+                HistoryScreen(onOpen = { id -> nav.navigate(Routes.historyDetail(id)) })
+            }
+            composable(
+                route = Routes.HISTORY_DETAIL,
+                arguments = listOf(navArgument("id") { type = NavType.IntType }),
+            ) { entry ->
+                HistoryDetailScreen(entry.arguments!!.getInt("id"))
             }
         }
     }
