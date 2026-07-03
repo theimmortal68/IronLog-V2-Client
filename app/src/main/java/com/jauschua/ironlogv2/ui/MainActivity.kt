@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -33,9 +34,12 @@ import androidx.navigation.navArgument
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.ui.screens.bands.BandsScreen
 import com.jauschua.ironlogv2.ui.screens.capture.CaptureScreen
+import com.jauschua.ironlogv2.ui.screens.history.HistoryDetailScreen
+import com.jauschua.ironlogv2.ui.screens.history.HistoryScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
 import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
+import com.jauschua.ironlogv2.ui.screens.today.TodayScreen
 import com.jauschua.ironlogv2.ui.screens.wizard.WizardScreen
 import com.jauschua.ironlogv2.ui.theme.IronLogV2Theme
 
@@ -59,6 +63,7 @@ private data class Tab(
 )
 
 private val TABS = listOf(
+    Tab(Routes.TODAY, "Today", Icons.Filled.Today),
     Tab(Routes.MOVEMENTS, "Movements", Icons.Filled.FitnessCenter),
     Tab(Routes.BANDS, "Bands", Icons.Filled.Sync),
     Tab(Routes.AUTOREGULATE, "Autoregulate", Icons.Filled.Calculate),
@@ -96,9 +101,21 @@ private fun RootScaffold() {
 
         NavHost(
             navController = nav,
-            startDestination = Routes.MOVEMENTS,
+            startDestination = Routes.TODAY,
             modifier = Modifier.fillMaxSize().padding(inner),
         ) {
+            composable(Routes.TODAY) {
+                TodayScreen(
+                    onContinue = {
+                        nav.navigate(Routes.CAPTURE) {
+                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    onHistory = { nav.navigate(Routes.HISTORY) },
+                )
+            }
             composable(Routes.MOVEMENTS) {
                 MovementsListScreen(onMovementClick = { id ->
                     nav.navigate(Routes.movementDetail(id))
@@ -142,6 +159,21 @@ private fun RootScaffold() {
                             restoreState = true
                         }
                     },
+                )
+            }
+            composable(Routes.HISTORY) {
+                HistoryScreen(
+                    onOpen = { id -> nav.navigate(Routes.historyDetail(id)) },
+                    onBack = { nav.popBackStack() },
+                )
+            }
+            composable(
+                route = Routes.HISTORY_DETAIL,
+                arguments = listOf(navArgument("id") { type = NavType.IntType }),
+            ) { entry ->
+                HistoryDetailScreen(
+                    id = entry.arguments!!.getInt("id"),
+                    onBack = { nav.popBackStack() },
                 )
             }
         }
