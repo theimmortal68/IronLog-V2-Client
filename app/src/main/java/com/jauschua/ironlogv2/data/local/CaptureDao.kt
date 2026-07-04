@@ -23,4 +23,23 @@ interface CaptureDao {
     suspend fun clearSurveys(sessionId: Int)
     @Query("DELETE FROM note_draft WHERE sessionId = :sessionId")
     suspend fun clearNotes(sessionId: Int)
+
+    // ── Scoped upsert/query for the group-review sheet + session note ──────────────
+    @Query("DELETE FROM survey_draft WHERE sessionId = :sessionId AND movementId IN (:movementIds)")
+    suspend fun deleteSurveysForMovements(sessionId: Int, movementIds: List<Int>)
+
+    @Query("SELECT * FROM survey_draft WHERE sessionId = :sessionId AND movementId IN (:movementIds) ORDER BY draftId")
+    suspend fun surveysForMovements(sessionId: Int, movementIds: List<Int>): List<SurveyDraft>
+
+    @Query("DELETE FROM note_draft WHERE sessionId = :sessionId AND movementId = :movementId")
+    suspend fun deleteNoteForMovement(sessionId: Int, movementId: Int)
+
+    @Query("SELECT * FROM note_draft WHERE sessionId = :sessionId AND movementId = :movementId ORDER BY draftId LIMIT 1")
+    suspend fun noteForMovement(sessionId: Int, movementId: Int): NoteDraft?
+
+    @Query("DELETE FROM note_draft WHERE sessionId = :sessionId AND movementId IS NULL")
+    suspend fun deleteSessionNote(sessionId: Int)
+
+    @Query("SELECT * FROM note_draft WHERE sessionId = :sessionId AND movementId IS NULL ORDER BY draftId LIMIT 1")
+    suspend fun sessionNote(sessionId: Int): NoteDraft?
 }

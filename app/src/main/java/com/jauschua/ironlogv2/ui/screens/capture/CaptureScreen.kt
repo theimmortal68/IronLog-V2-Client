@@ -23,6 +23,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -59,6 +60,7 @@ fun CaptureScreen(
     val submitResult by vm.submitResult.collectAsStateWithLifecycle()
     val currentPlannedSetId by vm.currentPlannedSetId.collectAsStateWithLifecycle()
     val restRemainingSeconds by vm.restRemainingSeconds.collectAsStateWithLifecycle()
+    val pendingReview by vm.pendingReview.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { vm.load() }
@@ -85,6 +87,14 @@ fun CaptureScreen(
                 }
             }
         }
+
+        pendingReview?.let { review ->
+            GroupReviewSheet(
+                review = review,
+                onSave = { flags, note -> scope.launch { vm.saveReview(review.group, flags, note) } },
+                onSkip = { vm.dismissReview() },
+            )
+        }
     }
 }
 
@@ -109,6 +119,9 @@ private fun SessionContent(
     val pastIds = remember(session, currentPlannedSetId) { pastSetIds(flatSets, currentPlannedSetId) }
     // The planned set the cursor currently points at — source of the pre-fill defaults below.
     val currentSet = remember(session, currentPlannedSetId) { flatSets.find { it.id == currentPlannedSetId } }
+
+    // Session-level note, entered on the Finish screen; anchored to no movement (null) on submit.
+    var sessionNote by remember(session.id) { mutableStateOf("") }
 
     // Input state for the current set; auto-resets (and re-pre-fills) when the cursor advances.
     // Weight/reps default to the prescription target — the lifter can accept or adjust before
@@ -239,6 +252,14 @@ private fun SessionContent(
                     )
                 }
 
+                if (groupIsComplete(group, pastIds)) {
+                    item(key = "review-$gi") {
+                        TextButton(onClick = { scope.launch { vm.openReview(group) } }) {
+                            Text("✎ Review flags / note")
+                        }
+                    }
+                }
+
                 group.exercises.forEachIndexed { ei, exercise ->
                     // HT setup for this exercise, if any — the first planned set carrying
                     // target_plates/band_config (all planned sets in an HT exercise share the
@@ -340,8 +361,14 @@ private fun SessionContent(
                                     else MaterialTheme.colorScheme.error
                         Text("Session $result", color = color)
                     }
+                    OutlinedTextField(
+                        value = sessionNote,
+                        onValueChange = { sessionNote = it },
+                        label = { Text("Session note (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Button(
-                        onClick = { vm.finish() },
+                        onClick = { scope.launch { vm.finish(sessionNote.ifBlank { null }) } },
                         enabled = submitResult != "COMPLETED",
                         modifier = Modifier.fillMaxWidth(),
                     ) {

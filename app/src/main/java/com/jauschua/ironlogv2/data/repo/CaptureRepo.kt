@@ -4,10 +4,14 @@ import com.jauschua.ironlogv2.data.api.ApiClient
 import com.jauschua.ironlogv2.data.api.dto.*
 import com.jauschua.ironlogv2.data.api.runCatchingApi
 import com.jauschua.ironlogv2.data.local.CaptureDao
+import com.jauschua.ironlogv2.data.local.NoteDraft
 import com.jauschua.ironlogv2.data.local.SetLogDraft
+import com.jauschua.ironlogv2.data.local.SurveyDraft
 import io.ktor.client.call.body
 import io.ktor.client.request.*
 import io.ktor.http.*
+
+data class ReviewPrefill(val surveys: List<SurveyDraft>, val noteText: String?)
 
 class CaptureRepo(private val apiClient: ApiClient, private val dao: CaptureDao) {
 
@@ -43,5 +47,45 @@ class CaptureRepo(private val apiClient: ApiClient, private val dao: CaptureDao)
         }.body()
         dao.clearSetLogs(sessionId); dao.clearSurveys(sessionId); dao.clearNotes(sessionId)
         resp
+    }
+
+    /**
+     * Save one group's review: one SurveyDraft per exercise + an optional note anchored to the
+     * group's first exercise. Idempotent — deletes the group's prior survey rows and the anchor's
+     * prior note first, so re-opening and re-saving replaces rather than duplicates. Local only.
+     */
+    suspend fun saveGroupReview(
+        sessionId: Int,
+        surveys: List<SurveyDraft>,
+        anchorMovementId: Int,
+        noteText: String?,
+    ) {
+        val movementIds = surveys.map { it.movementId }
+        dao.deleteSurveysForMovements(sessionId, movementIds)
+        dao.deleteNoteForMovement(sessionId, anchorMovementId)
+        surveys.forEach { dao.insertSurvey(it) }
+        val trimmed = noteText?.trim().orEmpty()
+        if (trimmed.isNotEmpty()) {
+            dao.insertNote(NoteDraft(sessionId = sessionId, movementId = anchorMovementId, text = trimmed))
+        }
+    }
+
+    /** Prefill for reopening a group's review sheet. */
+    suspend fun reviewDraftsFor(
+        sessionId: Int,
+        movementIds: List<Int>,
+        anchorMovementId: Int,
+    ): ReviewPrefill = ReviewPrefill(
+        surveys = dao.surveysForMovements(sessionId, movementIds),
+        noteText = dao.noteForMovement(sessionId, anchorMovementId)?.text,
+    )
+
+    /** Upsert the session-level (movement_id = null) note; blank text clears it. Local only. */
+    suspend fun saveSessionNote(sessionId: Int, text: String?) {
+        dao.deleteSessionNote(sessionId)
+        val trimmed = text?.trim().orEmpty()
+        if (trimmed.isNotEmpty()) {
+            dao.insertNote(NoteDraft(sessionId = sessionId, movementId = null, text = trimmed))
+        }
     }
 }
