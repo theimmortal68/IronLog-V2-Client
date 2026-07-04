@@ -1,7 +1,7 @@
 # Task 6 — HT band-composite setup display + reconfigure cue + felt-peak capture — completion report
 
 **Status:** completed
-**Commit:** `<filled in below after commit>`
+**Commit:** `c5e95f6` — `feat(capture): HT band-composite setup display + reconfigure cue + felt-peak capture`
 **Branch:** `feat/ht-band-composite`
 
 > Note: this report supersedes the prior "Today tab" Task 6 report (branch
@@ -109,7 +109,7 @@ BUILD SUCCESSFUL in 2s
 ## Commit
 
 - Message subject: `feat(capture): HT band-composite setup display + reconfigure cue + felt-peak capture`
-- SHA: `<filled in below>`
+- SHA: `c5e95f6a5a52e7880c2b03c32665859710be138e`
 - Files staged: `CaptureModels.kt`, `CaptureScreen.kt`, `CaptureViewModel.kt`,
   `CaptureScreenLogicTest.kt`, plus this report file. `app/build.gradle.kts` and
   `.superpowers/sdd/task-7-report.md` were left out of the commit (pre-existing unrelated dirty
