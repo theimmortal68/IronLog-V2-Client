@@ -15,7 +15,17 @@ import kotlinx.serialization.Serializable
     val movement_id: Int, val movement_name: String, val set_index: Int,
     val reps: Int? = null, val load: Double? = null, val tap: String? = null,
     val is_warmup: Boolean,
+    val rpe_numeric: Double? = null, val felt_peak: Double? = null,
 )
+@Serializable data class SurveyOut(
+    val movement_id: Int, val movement_name: String,
+    val asymmetry_flag: Boolean? = null, val technique_flag: Boolean? = null,
+    val sticking_point: String? = null,
+)
+@Serializable data class NoteOut(val movement_id: Int? = null, val text: String)
 @Serializable data class LoggedSetsResponse(
-    val session_id: Int, val date: String, val day_role: String, val logs: List<LoggedSet>,
+    val session_id: Int, val date: String, val day_role: String,
+    val logs: List<LoggedSet>,
+    val surveys: List<SurveyOut> = emptyList(),
+    val notes: List<NoteOut> = emptyList(),
 )
