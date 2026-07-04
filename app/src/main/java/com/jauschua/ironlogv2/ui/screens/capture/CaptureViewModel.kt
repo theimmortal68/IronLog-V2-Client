@@ -8,11 +8,13 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.data.api.IronLogException
 import com.jauschua.ironlogv2.data.api.humanMessage
+import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.FeedbackTap
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.local.SetLogDraft
+import com.jauschua.ironlogv2.data.local.SurveyDraft
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.ui.UiState
 import kotlinx.coroutines.Job
@@ -61,6 +63,27 @@ internal fun unilateralPlannedSetIds(groups: List<GroupOut>): Set<Int> = groups
     .flatMap { it.planned_sets }
     .map { it.id }
     .toSet()
+
+/** The group whose review sheet is open, plus any existing drafts to prefill it. */
+data class GroupReview(
+    val group: GroupOut,
+    val surveys: List<SurveyDraft>,
+    val noteText: String?,
+)
+
+/**
+ * Map each group's cursor-order LAST planned-set id → that group. Groups are contiguous in
+ * [flattenPrescription], so a group's final flattened entry marks its completion; when that set
+ * is logged and the cursor advances past it, the group is done.
+ */
+internal fun lastSetIdByGroup(groups: List<GroupOut>): Map<Int, GroupOut> =
+    groups.mapNotNull { g ->
+        flattenPrescription(listOf(g)).lastOrNull()?.let { it.id to g }
+    }.toMap()
+
+/** True iff every planned set in [group] is in [pastIds] (used for the reopen affordance). */
+fun groupIsComplete(group: GroupOut, pastIds: Set<Int>): Boolean =
+    group.exercises.flatMap { it.planned_sets }.map { it.id }.all { it in pastIds }
 
 class CaptureViewModel(
     private val repo: CaptureRepo,
@@ -124,6 +147,11 @@ class CaptureViewModel(
      */
     private var restContextBySetId: Map<Int, SetRestContext> = emptyMap()
 
+    private var lastSetIdByGroup: Map<Int, GroupOut> = emptyMap()
+
+    private val _pendingReview = MutableStateFlow<GroupReview?>(null)
+    val pendingReview: StateFlow<GroupReview?> = _pendingReview.asStateFlow()
+
     /** The running rest countdown ticker, if any. Cancelled/replaced by [startRest]/[skipRest]. */
     private var restJob: Job? = null
 
@@ -151,6 +179,7 @@ class CaptureViewModel(
                         unilateralSetIds = unilateralPlannedSetIds(session.groups)
                         unilateralSideCount = 0
                         restContextBySetId = restContextByPlannedSetId(session.groups)
+                        lastSetIdByGroup = lastSetIdByGroup(session.groups)
                         _currentPlannedSetId.value = flattenedPrescription.firstOrNull()?.id
                     }
                     _state.value = UiState.Success(session)
@@ -186,6 +215,7 @@ class CaptureViewModel(
         unilateralSetIds = unilateralPlannedSetIds(groups)
         unilateralSideCount = 0
         restContextBySetId = restContextByPlannedSetId(groups)
+        lastSetIdByGroup = lastSetIdByGroup(groups)
         _currentPlannedSetId.value = flattenedPrescription.firstOrNull()?.id
     }
 
@@ -265,6 +295,18 @@ class CaptureViewModel(
                     startRest(restSeconds(ctx.baseRestSeconds, ctx.tierLabel, tapEnum, ctx.isGiantSet))
                 }
             }
+
+            // Group-review trigger: if the set just logged was this group's LAST cursor entry,
+            // open the review sheet (prefilled from any existing drafts). Reads state AFTER the
+            // Room commit + cursor advance — never gates the write.
+            lastSetIdByGroup[plannedSetId]?.let { group ->
+                val prefill = repo.reviewDraftsFor(
+                    sessionId,
+                    group.exercises.map { it.movement_id },
+                    anchorMovementId = group.exercises.first().movement_id,
+                )
+                _pendingReview.value = GroupReview(group, prefill.surveys, prefill.noteText)
+            }
         }
     }
 
@@ -301,13 +343,59 @@ class CaptureViewModel(
         _restRemainingSeconds.value?.let { _restRemainingSeconds.value = it + extraSeconds }
     }
 
-    /** Batch-submit all pending drafts. Idempotent — drafts persist across retries. */
-    fun finish() {
-        viewModelScope.launch {
-            repo.submit(sessionId)
-                .onSuccess { _submitResult.value = it.status }
-                .onFailure { _submitResult.value = "RETRY" }
+    /**
+     * Reopen a completed group's review sheet, prefilled from existing drafts.
+     *
+     * Suspend (not `viewModelScope.launch`-wrapped) — same convention as [logWorkingSet]: the
+     * caller (the screen, via `scope.launch { }`) drives the coroutine, so awaiting this
+     * function's completion is meaningful (and testable synchronously from a plain `runBlocking`)
+     * instead of being a fire-and-forget dispatch the caller can't observe finishing.
+     */
+    suspend fun openReview(group: GroupOut) {
+        val prefill = repo.reviewDraftsFor(
+            sessionId,
+            group.exercises.map { it.movement_id },
+            anchorMovementId = group.exercises.first().movement_id,
+        )
+        _pendingReview.value = GroupReview(group, prefill.surveys, prefill.noteText)
+    }
+
+    /** Skip / close the review sheet without writing anything. */
+    fun dismissReview() { _pendingReview.value = null }
+
+    /**
+     * Persist a group's review. [flags] maps movement_id → (asymmetry, technique); a missing
+     * movement defaults to (false, false). Writes one SurveyDraft per exercise + an optional
+     * note anchored to the group's first exercise. Idempotent (repo replaces prior rows).
+     *
+     * Suspend — see [openReview] for why this isn't `viewModelScope.launch`-wrapped.
+     */
+    suspend fun saveReview(group: GroupOut, flags: Map<Int, Pair<Boolean, Boolean>>, noteText: String?) {
+        val surveys = group.exercises.map { e ->
+            val (asym, tech) = flags[e.movement_id] ?: (false to false)
+            SurveyDraft(
+                sessionId = sessionId, movementId = e.movement_id,
+                stickingPoint = null, asymmetryFlag = asym, techniqueFlag = tech,
+            )
         }
+        repo.saveGroupReview(
+            sessionId, surveys,
+            anchorMovementId = group.exercises.first().movement_id,
+            noteText = noteText,
+        )
+        _pendingReview.value = null
+    }
+
+    /**
+     * Batch-submit all pending drafts. Writes the session note (if any) first, then submits.
+     *
+     * Suspend — see [openReview] for why this isn't `viewModelScope.launch`-wrapped.
+     */
+    suspend fun finish(sessionNote: String? = null) {
+        repo.saveSessionNote(sessionId, sessionNote)
+        repo.submit(sessionId)
+            .onSuccess { _submitResult.value = it.status }
+            .onFailure { _submitResult.value = "RETRY" }
     }
 
     companion object {

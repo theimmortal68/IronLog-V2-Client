@@ -341,7 +341,7 @@ private fun SessionContent(
                         Text("Session $result", color = color)
                     }
                     Button(
-                        onClick = { vm.finish() },
+                        onClick = { scope.launch { vm.finish() } },
                         enabled = submitResult != "COMPLETED",
                         modifier = Modifier.fillMaxWidth(),
                     ) {
