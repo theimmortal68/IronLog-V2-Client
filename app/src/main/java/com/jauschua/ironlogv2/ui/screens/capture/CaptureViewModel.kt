@@ -222,6 +222,7 @@ class CaptureViewModel(
         actualReps: Int?,
         tap: String?,
         isWarmup: Boolean = false,
+        feltPeak: Double? = null,
     ) {
         if (setRole in TAP_REQUIRED && tap == null) {
             _uiError.value = "Tap required before continuing"
@@ -240,6 +241,7 @@ class CaptureViewModel(
                 actualLoad = actualLoad,
                 actualReps = actualReps,
                 feedbackTap = tap,
+                feltPeak = feltPeak,
             ),
         )
         // Advance cursor ONLY after the commit — write-before-advance enforced.

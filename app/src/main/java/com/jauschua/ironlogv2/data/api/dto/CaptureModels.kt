@@ -28,6 +28,7 @@ import kotlinx.serialization.Serializable
     val target_reps_high: Int? = null, val target_rpe: Double? = null,
     val target_unassisted_reps: Int? = null, val target_assisted_reps: Int? = null,
     val target_plates: Double? = null, val band_pair_id: Int? = null, val target_felt_peak: Double? = null,
+    val band_config: List<Int>? = null,
 )
 @Serializable data class ExerciseOut(
     val id: Int, val movement_id: Int, val movement_name: String, val order_index: Int,

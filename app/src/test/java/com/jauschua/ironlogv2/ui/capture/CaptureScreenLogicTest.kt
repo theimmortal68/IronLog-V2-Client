@@ -4,9 +4,13 @@ package com.jauschua.ironlogv2.ui.capture
 import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
+import com.jauschua.ironlogv2.ui.screens.capture.bandNames
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import com.jauschua.ironlogv2.ui.screens.capture.formatRepsTarget
 import com.jauschua.ironlogv2.ui.screens.capture.groupProgressHint
+import com.jauschua.ironlogv2.ui.screens.capture.htObservedPeak
+import com.jauschua.ironlogv2.ui.screens.capture.htReconfigure
+import com.jauschua.ironlogv2.ui.screens.capture.htSetupLine
 import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
 import com.jauschua.ironlogv2.ui.screens.capture.prefillReps
@@ -15,6 +19,7 @@ import com.jauschua.ironlogv2.ui.screens.capture.repsInputLabel
 import com.jauschua.ironlogv2.ui.screens.capture.repsTargetLabel
 import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -259,5 +264,108 @@ class CaptureScreenLogicTest {
         val flat = flattenPrescription(listOf(group))
 
         assertEquals(setOf(1), pastSetIds(flat, currentPlannedSetId = null))
+    }
+
+    // ── Task 6: HT band-composite — reconfigure cue ─────────────────────────────────────
+    // Fires on an OR of (band config differs) OR (plate count differs) — not an AND, and not
+    // config-only. Null-safe/total for any combination of nulls.
+
+    @Test
+    fun htReconfigure_fires_when_band_config_differs() {
+        assertNotNull(htReconfigure(prevPlates = 205.0, prevConfig = listOf(0), plates = 166.0, config = listOf(0, 1)))
+    }
+
+    @Test
+    fun htReconfigure_fires_when_only_plate_count_differs() {
+        // same config, plates changed 205 -> 210: still fires under the OR rule.
+        assertNotNull(htReconfigure(prevPlates = 205.0, prevConfig = listOf(0), plates = 210.0, config = listOf(0)))
+    }
+
+    @Test
+    fun htReconfigure_null_when_nothing_differs() {
+        assertNull(htReconfigure(prevPlates = 205.0, prevConfig = listOf(0), plates = 205.0, config = listOf(0)))
+    }
+
+    @Test
+    fun htReconfigure_null_when_prev_and_current_both_fully_null() {
+        assertNull(htReconfigure(prevPlates = null, prevConfig = null, plates = null, config = null))
+    }
+
+    @Test
+    fun htReconfigure_fires_when_prev_null_and_current_non_null() {
+        assertNotNull(htReconfigure(prevPlates = null, prevConfig = null, plates = 166.0, config = listOf(0)))
+    }
+
+    @Test
+    fun htReconfigure_null_when_current_fully_null_even_if_prev_was_set() {
+        // Nothing to reconfigure TO — don't recommend an empty setup.
+        assertNull(htReconfigure(prevPlates = 205.0, prevConfig = listOf(0), plates = null, config = null))
+    }
+
+    // ── Task 6: HT band-composite — observed peak (single-band only) ────────────────────
+
+    @Test
+    fun htObservedPeak_single_band_is_felt_minus_plates() {
+        assertEquals(155.0, htObservedPeak(feltPeak = 255.0, plates = 100.0, config = listOf(2))!!, 0.001)
+    }
+
+    @Test
+    fun htObservedPeak_null_for_multi_band() {
+        assertNull(htObservedPeak(feltPeak = 255.0, plates = 100.0, config = listOf(0, 1)))
+    }
+
+    @Test
+    fun htObservedPeak_null_when_config_null_or_empty() {
+        assertNull(htObservedPeak(feltPeak = 255.0, plates = 100.0, config = null))
+        assertNull(htObservedPeak(feltPeak = 255.0, plates = 100.0, config = emptyList()))
+    }
+
+    @Test
+    fun htObservedPeak_null_when_felt_peak_or_plates_null() {
+        assertNull(htObservedPeak(feltPeak = null, plates = 100.0, config = listOf(0)))
+        assertNull(htObservedPeak(feltPeak = 255.0, plates = null, config = listOf(0)))
+    }
+
+    // ── Task 6: HT band-composite — band id -> name mapping ─────────────────────────────
+
+    @Test
+    fun bandNames_maps_ids_to_names_in_order() {
+        assertEquals(listOf("Orange", "Red"), bandNames(listOf(0, 1)))
+    }
+
+    @Test
+    fun bandNames_skips_out_of_range_ids_defensively() {
+        assertEquals(listOf("Orange"), bandNames(listOf(0, 99)))
+    }
+
+    @Test
+    fun bandNames_empty_for_null_or_empty_config() {
+        assertEquals(emptyList<String>(), bandNames(null))
+        assertEquals(emptyList<String>(), bandNames(emptyList()))
+    }
+
+    // ── Task 6: HT band-composite — setup line composer ─────────────────────────────────
+
+    @Test
+    fun htSetupLine_composes_plates_bands_and_peak() {
+        assertEquals(
+            "166 plates + Orange, Red · peak ~250",
+            htSetupLine(plates = 166.0, config = listOf(0, 1), targetFeltPeak = 250.0),
+        )
+    }
+
+    @Test
+    fun htSetupLine_plates_only() {
+        assertEquals("166 plates", htSetupLine(plates = 166.0, config = null, targetFeltPeak = null))
+    }
+
+    @Test
+    fun htSetupLine_bands_only() {
+        assertEquals("Orange, Red", htSetupLine(plates = null, config = listOf(0, 1), targetFeltPeak = null))
+    }
+
+    @Test
+    fun htSetupLine_peak_only() {
+        assertEquals("peak ~250", htSetupLine(plates = null, config = null, targetFeltPeak = 250.0))
     }
 }
