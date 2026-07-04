@@ -37,6 +37,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class GroupOut(
     val id: Int, val order_index: Int, val group_type: String, val rounds: Int,
     val rest_seconds: Int? = null, val label: String? = null, val exercises: List<ExerciseOut>,
+    val shoe: String? = null,
 )
 @Serializable data class SessionDetailResponse(
     val id: Int, val date: String, val day_role: String, val phase: String,

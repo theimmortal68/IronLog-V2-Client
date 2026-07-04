@@ -14,6 +14,7 @@ import com.jauschua.ironlogv2.ui.screens.capture.prefillWeight
 import com.jauschua.ironlogv2.ui.screens.capture.repsInputLabel
 import com.jauschua.ironlogv2.ui.screens.capture.repsTargetLabel
 import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
+import com.jauschua.ironlogv2.ui.screens.capture.shoeTransition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -259,5 +260,30 @@ class CaptureScreenLogicTest {
         val flat = flattenPrescription(listOf(group))
 
         assertEquals(setOf(1), pastSetIds(flat, currentPlannedSetId = null))
+    }
+
+    // ── shoeTransition: shoe-swap cue banner decision ────────────────────────────────────
+    // Pure helper backing the per-group "👟 Swap to X" banner — non-null iff the group's shoe
+    // differs from the previous group's shoe AND is itself non-null (no banner for a group with
+    // no shoe assigned, even if the previous one had one).
+
+    @Test
+    fun shoeTransition_returns_new_shoe_when_changed() {
+        assertEquals("Adipower II", shoeTransition(prevShoe = "Metcon 9", thisShoe = "Adipower II"))
+    }
+
+    @Test
+    fun shoeTransition_null_when_unchanged() {
+        assertNull(shoeTransition(prevShoe = "Metcon 9", thisShoe = "Metcon 9"))
+    }
+
+    @Test
+    fun shoeTransition_null_when_this_shoe_is_null() {
+        assertNull(shoeTransition(prevShoe = "Metcon 9", thisShoe = null))
+    }
+
+    @Test
+    fun shoeTransition_returns_shoe_when_previous_is_null() {
+        assertEquals("Metcon 9", shoeTransition(prevShoe = null, thisShoe = "Metcon 9"))
     }
 }

@@ -187,10 +187,38 @@ private fun SessionContent(
                 )
             }
 
+            // Starting shoe — the first group's shoe, e.g. "👟 Metcon 9". Covers group 0, so
+            // group 0 never also gets a swap banner (see the loop below).
+            session.groups.firstNotNullOfOrNull { it.shoe }?.let { startingShoe ->
+                item(key = "starting-shoe") {
+                    Text(
+                        text = "👟 $startingShoe",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             session.groups.forEachIndexed { gi, group ->
                 // Auto-accordion: expanded iff this group holds the cursor, unless manually
                 // overridden. Compute here (LazyColumn item lambdas aren't a scope for a local fun).
                 val expanded = isGroupExpanded(gi)
+
+                // Mid-session swap cue: fires at the first group whose shoe differs from the
+                // PREVIOUS group's shoe. Group 0 is excluded — the session header already covers
+                // the starting shoe, so it never also gets a banner.
+                if (gi > 0) {
+                    shoeTransition(session.groups[gi - 1].shoe, group.shoe)?.let { swapTo ->
+                        item(key = "shoe-swap-$gi") {
+                            Text(
+                                text = "👟 Swap to $swapTo",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
+                    }
+                }
 
                 item(key = "group-$gi") {
                     GroupHeader(
@@ -543,3 +571,12 @@ internal fun rpeLabel(rpe: Double?): String? = rpe?.let { "RPE ${formatWeight(it
 
 /** `"Per side"` affordance for a unilateral exercise's set, or null for bilateral exercises. */
 internal fun perSideLabel(unilateral: Boolean): String? = if (unilateral) "Per side" else null
+
+/**
+ * Shoe-swap cue decision for a group boundary: the shoe to swap TO (rendered as a
+ * `"👟 Swap to X"` banner at that group) when [thisShoe] is non-null and differs from
+ * [prevShoe] — the previous group's shoe. Null (no banner) when the shoe is unchanged or when
+ * this group carries no shoe assignment at all. Pure display — never touches engine/state.
+ */
+internal fun shoeTransition(prevShoe: String?, thisShoe: String?): String? =
+    if (thisShoe != null && thisShoe != prevShoe) thisShoe else null
