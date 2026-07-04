@@ -57,6 +57,12 @@ private class FakeGatedDao(
     }
     override suspend fun clearSurveys(sessionId: Int) {}
     override suspend fun clearNotes(sessionId: Int) {}
+    override suspend fun deleteSurveysForMovements(sessionId: Int, movementIds: List<Int>) {}
+    override suspend fun surveysForMovements(sessionId: Int, movementIds: List<Int>): List<SurveyDraft> = emptyList()
+    override suspend fun deleteNoteForMovement(sessionId: Int, movementId: Int) {}
+    override suspend fun noteForMovement(sessionId: Int, movementId: Int): NoteDraft? = null
+    override suspend fun deleteSessionNote(sessionId: Int) {}
+    override suspend fun sessionNote(sessionId: Int): NoteDraft? = null
 }
 
 @RunWith(RobolectricTestRunner::class)
