@@ -8,7 +8,6 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.data.api.IronLogException
 import com.jauschua.ironlogv2.data.api.humanMessage
-import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.FeedbackTap
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
