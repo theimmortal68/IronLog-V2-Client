@@ -48,6 +48,7 @@ import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
+import com.jauschua.ironlogv2.ui.screens.review.displayMovementName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -325,7 +326,7 @@ private fun SessionContent(
                         itemKeys.add("ex-$gi-$ei")
                         item(key = "ex-$gi-$ei") {
                             Text(
-                                text = exercise.movement_name,
+                                text = displayMovementName(exercise.movement_name),
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.padding(start = 8.dp),
                             )

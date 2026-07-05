@@ -9,6 +9,7 @@ import com.jauschua.ironlogv2.data.api.dto.Region
 import com.jauschua.ironlogv2.ui.screens.review.AdjustmentKind
 import com.jauschua.ironlogv2.ui.screens.review.adjustmentKind
 import com.jauschua.ironlogv2.ui.screens.review.defaultSourceSlot
+import com.jauschua.ironlogv2.ui.screens.review.displayMovementName
 import com.jauschua.ironlogv2.ui.screens.review.filterMovements
 import com.jauschua.ironlogv2.ui.screens.review.isConfigChange
 import com.jauschua.ironlogv2.ui.screens.review.pickerSeedText
@@ -205,5 +206,26 @@ class ReviewLogicTest {
 
     @Test fun defaultSourceSlot_empty_slots_returns_null() {
         assertNull(defaultSourceSlot("hip thrust", emptyList()))
+    }
+
+    // --- displayMovementName ---
+
+    @Test fun displayMovementName_strips_trailing_code_bracket() {
+        assertEquals("Hip Thrust", displayMovementName("Hip Thrust [HIP_THRUST]"))
+        assertEquals("Light Reverse Hyper", displayMovementName("Light Reverse Hyper [REV_HYPER]"))
+        assertEquals("Bench Press", displayMovementName("Bench Press [PB]"))
+    }
+
+    @Test fun displayMovementName_no_bracket_returns_unchanged() {
+        assertEquals("Hip Thrust", displayMovementName("Hip Thrust"))
+    }
+
+    @Test fun displayMovementName_internal_bracket_not_at_end_is_left_alone() {
+        assertEquals("Hip [Thrust] Variant", displayMovementName("Hip [Thrust] Variant"))
+    }
+
+    @Test fun displayMovementName_trims_and_handles_blank() {
+        assertEquals("", displayMovementName(""))
+        assertEquals("Squat", displayMovementName("  Squat [SQUAT]  "))
     }
 }
