@@ -10,6 +10,7 @@ object Routes {
     const val WIZARD = "wizard?programId={programId}"
     const val HISTORY = "history"
     const val HISTORY_DETAIL = "history/{id}"
+    const val REVIEW = "review"
 
     /** Phase 1's program for the first-run wizard (beta has a single program). */
     const val DEFAULT_PROGRAM_ID = 1

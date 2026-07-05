@@ -50,6 +50,7 @@ import com.jauschua.ironlogv2.ui.ErrorRetryBox
 fun TodayScreen(
     onContinue: () -> Unit,
     onHistory: () -> Unit,
+    onReview: () -> Unit,
     vm: TodayViewModel = viewModel(factory = TodayViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -60,7 +61,10 @@ fun TodayScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Today") },
-                actions = { TextButton(onClick = onHistory) { Text("History") } },
+                actions = {
+                    TextButton(onClick = onReview) { Text("Review") }
+                    TextButton(onClick = onHistory) { Text("History") }
+                },
             )
         },
     ) { inner ->
