@@ -289,12 +289,14 @@ private fun ApplyWizardDialog(
                         }
                         AdjustmentKind.LOAD -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Adjust load:", style = MaterialTheme.typography.bodyMedium)
+                            // Both directions: a LOAD_DECREASE note ("too heavy") lowers the load,
+                            // LOAD_INCREASE raises it. The server accepts negative load_delta.
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(5.0, 10.0, 15.0).forEach { delta ->
+                                listOf(-10.0, -5.0, 5.0, 10.0).forEach { delta ->
                                     OutlinedButton(
                                         onClick = { onSubmitLoad(delta, null) },
                                         enabled = !wizard.submitting,
-                                    ) { Text("+${delta.toInt()}") }
+                                    ) { Text("${if (delta >= 0) "+" else ""}${delta.toInt()}") }
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

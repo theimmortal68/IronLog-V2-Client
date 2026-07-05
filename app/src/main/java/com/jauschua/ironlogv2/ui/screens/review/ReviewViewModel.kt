@@ -117,7 +117,10 @@ class ReviewViewModel(
                     // or superseded while the fetch was in flight).
                     val current = _wizard.value ?: return@onSuccess
                     if (current.note.id != note.id) return@onSuccess
-                    val selected = defaultSourceSlot(note.proposed_change?.movement, slots) ?: slots.firstOrNull()
+                    // No fallback to the first slot: when the subject doesn't match any slot, leave
+                    // it UNSELECTED so the athlete must explicitly pick (avoids silently applying to
+                    // the wrong slot, e.g. bench). The wizard gates Apply on a selected slot.
+                    val selected = defaultSourceSlot(note.proposed_change?.movement, slots)
                     _wizard.value = current.copy(slots = slots, selectedSlot = selected, slotsLoading = false)
                 }
                 .onFailure { e ->

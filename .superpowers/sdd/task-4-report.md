@@ -87,9 +87,25 @@ first, confirmed the current fallback failed "drop OHP to 3x8", then fixed):
   to incline press" → SWAP. `action_type` (the enum) remains the unchanged FIRST-priority path.
 - ReviewLogicTest: 23 → 25 tests.
 
+## Follow-up: two apply-wizard UX gaps (whole-branch review)
+
+1. **LOAD had no negative-delta option.** `ReviewScreen.kt` LOAD block offered only `[+5][+10][+15]`
+   — a LOAD_DECREASE note ("too heavy") had no quick way down. Changed the delta row to
+   `[-10][-5][+5][+10]` (signed labels; server accepts negative `load_delta`); still sends exactly
+   one of load_delta/load_absolute, set-exact field unchanged. (Dropped +15 to keep the four-button
+   row balanced around zero.)
+2. **No-subject-match silently pre-selected the first slot.** `ReviewViewModel.openApply` did
+   `defaultSourceSlot(...) ?: slots.firstOrNull()`, so an unmatched subject defaulted to slot #1
+   (often bench). Removed the fallback — on no match the source slot is left UNSELECTED; the wizard
+   shows "No program slot selected." and gates Apply (the adjustment inputs render only when a slot
+   is selected; `submitApply` also returns early on null slot) until the athlete picks via the
+   always-present "Change" slot picker. A real subject match still pre-selects as before.
+   `defaultSourceSlot`'s null-on-no-match is already covered by existing pure tests; the wiring
+   change is build-gated.
+
 ## Build/test
 
-- `./gradlew :app:testDebugUnitTest --tests "*ReviewLogicTest*"` → BUILD SUCCESSFUL, 25 tests, 0 failures.
+- `./gradlew :app:testDebugUnitTest --tests "*ReviewLogic*"` → BUILD SUCCESSFUL, 25 tests, 0 failures.
 - `./gradlew :app:assembleDebug` → BUILD SUCCESSFUL.
 - `./gradlew :app:testDebugUnitTest` (full suite) → BUILD SUCCESSFUL, all green.
 
