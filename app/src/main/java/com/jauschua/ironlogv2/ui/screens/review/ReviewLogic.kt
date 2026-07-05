@@ -20,7 +20,9 @@ enum class AdjustmentKind { SWAP, LOAD, REPS, NONE }
 
 private val SWAP_KEYWORDS = listOf("swap", "switch", "replace", "instead of", "change to", "sub in", "substitute")
 private val LOAD_KEYWORDS = listOf("light", "heavy", "load", "weight", "increase", "decrease", "heavier", "lighter")
-private val REPS_KEYWORDS = listOf("rep")
+private val REPS_KEYWORDS = listOf("rep", "sets")
+/** An explicit NxM rep scheme, e.g. "3x8", "3 x 8", "5X5" — a strong REPS signal with no "rep" word. */
+private val REP_SCHEME_REGEX = Regex("""\d+\s*[x×]\s*\d+""", RegexOption.IGNORE_CASE)
 
 /** Maps the classifier's structured `action_type` (SWAP/LOAD_INCREASE/LOAD_DECREASE/REP_CHANGE/
  *  OTHER) to the adjustment the confirm-wizard should offer. Falls back to a keyword heuristic on
@@ -38,10 +40,15 @@ fun adjustmentKind(actionType: String?, actionText: String? = null): AdjustmentK
 private fun keywordAdjustmentKind(actionText: String?): AdjustmentKind {
     val t = actionText?.lowercase()?.trim().orEmpty()
     if (t.isBlank()) return AdjustmentKind.NONE
+    // REPS is checked FIRST: rep-target phrasing overlaps LOAD ("increase reps" vs the LOAD
+    // "increase" keyword) and SWAP ("change to 3x8" vs "change to"). An explicit NxM scheme or a
+    // "rep"/"sets" mention is a strong, specific REPS signal — route it before the broader
+    // LOAD/SWAP verbs so it isn't swallowed. The required LOAD/SWAP phrasings ("too light",
+    // "increase weight", "switch to X", "swap for X") carry no rep signal, so they fall through.
     return when {
-        SWAP_KEYWORDS.any { t.contains(it) } -> AdjustmentKind.SWAP
+        REP_SCHEME_REGEX.containsMatchIn(t) || REPS_KEYWORDS.any { t.contains(it) } -> AdjustmentKind.REPS
         LOAD_KEYWORDS.any { t.contains(it) } -> AdjustmentKind.LOAD
-        REPS_KEYWORDS.any { t.contains(it) } -> AdjustmentKind.REPS
+        SWAP_KEYWORDS.any { t.contains(it) } -> AdjustmentKind.SWAP
         else -> AdjustmentKind.NONE
     }
 }

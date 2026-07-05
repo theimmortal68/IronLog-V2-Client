@@ -95,6 +95,26 @@ class ReviewLogicTest {
         assertEquals(AdjustmentKind.NONE, adjustmentKind(null, ""))
     }
 
+    @Test fun adjustmentKind_fallback_routes_rep_target_phrasing_to_reps() {
+        // The server's own REP_CHANGE example — no "rep" word, an NxM scheme.
+        assertEquals(AdjustmentKind.REPS, adjustmentKind(null, "drop OHP to 3x8"))
+        assertEquals(AdjustmentKind.REPS, adjustmentKind(null, "3 x 8"))
+        assertEquals(AdjustmentKind.REPS, adjustmentKind(null, "move to 5X5"))
+        // "increase reps" / "more reps" must NOT be swallowed by the LOAD "increase" keyword.
+        assertEquals(AdjustmentKind.REPS, adjustmentKind(null, "increase reps"))
+        assertEquals(AdjustmentKind.REPS, adjustmentKind(null, "more reps"))
+        assertEquals(AdjustmentKind.REPS, adjustmentKind(null, "change the rep target"))
+    }
+
+    @Test fun adjustmentKind_fallback_keeps_load_and_swap_for_their_phrasings() {
+        assertEquals(AdjustmentKind.LOAD, adjustmentKind(null, "too light"))
+        assertEquals(AdjustmentKind.LOAD, adjustmentKind(null, "increase weight"))
+        assertEquals(AdjustmentKind.LOAD, adjustmentKind(null, "too heavy"))
+        assertEquals(AdjustmentKind.SWAP, adjustmentKind(null, "switch to incline"))
+        assertEquals(AdjustmentKind.SWAP, adjustmentKind(null, "swap for dumbbells"))
+        assertEquals(AdjustmentKind.SWAP, adjustmentKind(null, "change to incline press"))
+    }
+
     // --- Apply/Confirm gating ---
 
     @Test fun config_change_with_swap_kind_shows_apply_not_confirm() {

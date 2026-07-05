@@ -70,10 +70,26 @@ set 225 lb", "Squat 5–8 reps") plus `source_note_text` provenance and Revert. 
   stranding the athlete with an unusable "none selected" state — the athlete can still change it via
   the slot picker.
 
+## Follow-up: harden `adjustmentKind` keyword fallback (review finding)
+
+Review flagged that the keyword fallback (used only when `action_type` is absent — old/pre-Task-2
+notes) mis-scored rep-target phrasing: the server's own REP_CHANGE example "drop OHP to 3x8" hit no
+REPS keyword → fell through to NONE (Apply hidden entirely); "increase reps" was swallowed by the
+LOAD "increase" keyword; "change to X" could catch rep phrasing via SWAP. Fixed (TDD — tests added
+first, confirmed the current fallback failed "drop OHP to 3x8", then fixed):
+- Added `REP_SCHEME_REGEX` (`\d+\s*[x×]\s*\d+`, e.g. "3x8", "3 x 8", "5X5") + "sets" to the REPS
+  keyword set.
+- Reordered `keywordAdjustmentKind` so REPS (NxM / "rep" / "sets") is checked **before** LOAD and
+  SWAP, so rep phrasing isn't swallowed. The required LOAD/SWAP phrasings ("too light", "increase
+  weight", "switch to X", "swap for X") carry no rep signal and fall through correctly.
+- Verified: "drop OHP to 3x8"/"3 x 8"/"5X5"/"increase reps"/"more reps"/"change the rep target" →
+  REPS; "too light"/"increase weight"/"too heavy" → LOAD; "switch to incline"/"swap for X"/"change
+  to incline press" → SWAP. `action_type` (the enum) remains the unchanged FIRST-priority path.
+- ReviewLogicTest: 23 → 25 tests.
+
 ## Build/test
 
-- `./gradlew :app:testDebugUnitTest --tests "*ReviewLogic*" --tests "*NotesDtoTest*"` → BUILD
-  SUCCESSFUL, 23 + 5 tests, 0 failures.
+- `./gradlew :app:testDebugUnitTest --tests "*ReviewLogicTest*"` → BUILD SUCCESSFUL, 25 tests, 0 failures.
 - `./gradlew :app:assembleDebug` → BUILD SUCCESSFUL.
 - `./gradlew :app:testDebugUnitTest` (full suite) → BUILD SUCCESSFUL, all green.
 
