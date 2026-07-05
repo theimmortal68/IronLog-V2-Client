@@ -1,6 +1,5 @@
 package com.jauschua.ironlogv2.ui.screens.capture
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,8 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -101,7 +99,7 @@ fun CaptureScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionContent(
     session: SessionDetailResponse,
@@ -136,13 +134,19 @@ private fun SessionContent(
 
     // Scroll-into-view: when the cursor advances to a new set, the accordion re-flows (the
     // just-logged group collapses, the next one expands) but the LazyColumn itself doesn't
-    // scroll, so the newly-current set's input card can end up off-screen. Bring it into view
-    // whenever the cursor changes. Attached below to the current SetCard's root Modifier.
-    // runCatching guards the case where currentPlannedSetId is null (session fully logged) or
-    // the requester hasn't been laid out yet — both are no-ops, not errors.
-    val currentSetBringIntoViewRequester = remember { BringIntoViewRequester() }
+    // scroll, so the newly-current set's input card can end up off-screen. A LazyColumn only
+    // COMPOSES visible items, so an off-screen card's modifier-based relocation (the previous
+    // BringIntoViewRequester approach) attaches to a node that never gets laid out — silent
+    // no-op. Instead, track each item's stable key as the LazyColumn content is built (the DSL
+    // registration below runs eagerly every recomposition, unlike each item's lazily-composed
+    // body) and animate-scroll to the current set's position by key lookup.
+    val listState = rememberLazyListState()
+    val itemKeys = remember { mutableListOf<String>() }
     LaunchedEffect(currentPlannedSetId) {
-        runCatching { currentSetBringIntoViewRequester.bringIntoView() }
+        if (currentPlannedSetId != null) {
+            val index = itemKeys.indexOf("set-$currentPlannedSetId")
+            if (index >= 0) listState.animateScrollToItem(index)
+        }
     }
 
     // Collapsible group cards (accordion follows the cursor). Index of the group that owns the
@@ -202,11 +206,18 @@ private fun SessionContent(
         }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
         ) {
+            // Reset the key->position tracker; the block below re-registers one entry per
+            // item(...) call, in the exact order they're added, so `itemKeys.indexOf(key)`
+            // matches that item's real LazyColumn index.
+            itemKeys.clear()
+
             // Session header
+            itemKeys.add("header")
             item {
                 Text(
                     text = "${session.date} • ${session.day_role} • ${session.phase}",
@@ -218,6 +229,7 @@ private fun SessionContent(
             // Starting shoe — the first group's shoe, e.g. "👟 Metcon 9". Covers group 0, so
             // group 0 never also gets a swap banner (see the loop below).
             session.groups.firstNotNullOfOrNull { it.shoe }?.let { startingShoe ->
+                itemKeys.add("starting-shoe")
                 item(key = "starting-shoe") {
                     Text(
                         text = "👟 $startingShoe",
@@ -246,6 +258,7 @@ private fun SessionContent(
                 // the starting shoe, so it never also gets a banner.
                 if (gi > 0) {
                     shoeTransition(session.groups[gi - 1].shoe, group.shoe)?.let { swapTo ->
+                        itemKeys.add("shoe-swap-$gi")
                         item(key = "shoe-swap-$gi") {
                             Text(
                                 text = "👟 Swap to $swapTo",
@@ -257,6 +270,7 @@ private fun SessionContent(
                     }
                 }
 
+                itemKeys.add("group-$gi")
                 item(key = "group-$gi") {
                     GroupHeader(
                         title = group.label ?: group.group_type,
@@ -267,6 +281,7 @@ private fun SessionContent(
                 }
 
                 if (groupIsComplete(group, pastIds)) {
+                    itemKeys.add("review-$gi")
                     item(key = "review-$gi") {
                         TextButton(onClick = { scope.launch { vm.openReview(group) } }) {
                             Text("✎ Review flags / note")
@@ -296,6 +311,7 @@ private fun SessionContent(
 
                     if (expanded) {
                         if (reconfigureText != null) {
+                            itemKeys.add("ht-reconfigure-$gi-$ei")
                             item(key = "ht-reconfigure-$gi-$ei") {
                                 Text(
                                     text = reconfigureText,
@@ -306,6 +322,7 @@ private fun SessionContent(
                             }
                         }
 
+                        itemKeys.add("ex-$gi-$ei")
                         item(key = "ex-$gi-$ei") {
                             Text(
                                 text = exercise.movement_name,
@@ -319,13 +336,9 @@ private fun SessionContent(
                             val isPast = plannedSet.id in pastIds
                             val tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")
 
+                            itemKeys.add("set-${plannedSet.id}")
                             item(key = "set-${plannedSet.id}") {
                                 SetCard(
-                                    modifier = if (isCurrent) {
-                                        Modifier.bringIntoViewRequester(currentSetBringIntoViewRequester)
-                                    } else {
-                                        Modifier
-                                    },
                                     plannedSet = plannedSet,
                                     unilateral = exercise.unilateral,
                                     isCurrent = isCurrent,
@@ -363,6 +376,7 @@ private fun SessionContent(
 
             // UI error (tap required, etc.)
             uiError?.let { msg ->
+                itemKeys.add("error")
                 item(key = "error") {
                     Text(
                         text = msg,
@@ -373,6 +387,7 @@ private fun SessionContent(
             }
 
             // Finish / submit result
+            itemKeys.add("finish")
             item(key = "finish") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     submitResult?.let { result ->
@@ -456,7 +471,6 @@ private fun SetCard(
     onTapSelect: (String) -> Unit,
     onFeltPeakChange: (String) -> Unit,
     onLogSet: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     // "Log set" button is DISABLED until a tap is selected for working roles (Gate #2 — client UI).
     val logEnabled = !tapRequired || selectedTap != null
@@ -464,10 +478,10 @@ private fun SetCard(
     // HT (band-composite) working set: plates and/or bands prescribed on this planned set.
     val isHtSet = plannedSet.target_plates != null || plannedSet.band_config != null
 
-    // [modifier] carries the current set's bringIntoViewRequester (see SessionContent) so the
-    // whole card — including its input fields below — scrolls into view when the cursor lands
-    // on it; a no-op Modifier for non-current cards.
-    Card(modifier = modifier.fillMaxWidth().padding(start = 16.dp)) {
+    // Scroll-into-view for the current set is handled at the LazyColumn level (see
+    // SessionContent's listState/itemKeys) — this card no longer carries its own relocation
+    // modifier.
+    Card(modifier = Modifier.fillMaxWidth().padding(start = 16.dp)) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -535,23 +549,38 @@ private fun SetCard(
             // Input controls for the current set only
             if (isCurrent) {
                 val repsLabel = repsInputLabel(plannedSet)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = setLoad,
-                        onValueChange = onLoadChange,
-                        label = { Text("Load (lb)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
+                // HT (band-composite) sets are prescribed as plates+bands (see htSetupLine
+                // above) and logged via Felt peak, not a scalar Load — showing the Load field
+                // here (pre-filled from what used to be target_load) was confusing since it
+                // isn't the athlete's real input for these sets. Reps stays for every set type.
+                if (isHtSet) {
                     OutlinedTextField(
                         value = setReps,
                         onValueChange = onRepsChange,
                         label = { Text(repsLabel) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = setLoad,
+                            onValueChange = onLoadChange,
+                            label = { Text("Load (lb)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = setReps,
+                            onValueChange = onRepsChange,
+                            label = { Text(repsLabel) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
 
                 // Felt-peak capture — HT working sets only (band-composite peak resistance felt
