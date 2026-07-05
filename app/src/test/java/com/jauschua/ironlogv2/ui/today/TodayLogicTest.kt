@@ -2,6 +2,7 @@ package com.jauschua.ironlogv2.ui.today
 
 import com.jauschua.ironlogv2.ui.screens.today.GenerateOutcomeKind
 import com.jauschua.ironlogv2.ui.screens.today.classifyGenerate
+import com.jauschua.ironlogv2.ui.screens.today.reviewButtonLabel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -14,5 +15,15 @@ class TodayLogicTest {
     }
     @Test fun nonexhausted_but_null_preview_is_error() {
         assertEquals(GenerateOutcomeKind.ERROR, classifyGenerate(exhausted = false, hasPreview = false))
+    }
+
+    @Test fun review_label_with_zero_count_has_no_badge() {
+        assertEquals("Review", reviewButtonLabel(0))
+    }
+    @Test fun review_label_with_pending_count_shows_badge() {
+        assertEquals("Review (2)", reviewButtonLabel(2))
+    }
+    @Test fun review_label_with_single_pending_shows_badge() {
+        assertEquals("Review (1)", reviewButtonLabel(1))
     }
 }
