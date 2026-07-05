@@ -9,6 +9,8 @@ import com.jauschua.ironlogv2.ui.screens.review.filterMovements
 import com.jauschua.ironlogv2.ui.screens.review.isConfigChange
 import com.jauschua.ironlogv2.ui.screens.review.pickerSeedText
 import com.jauschua.ironlogv2.ui.screens.review.proposedChangeLine
+import com.jauschua.ironlogv2.ui.screens.review.showApply
+import com.jauschua.ironlogv2.ui.screens.review.showConfirm
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -48,6 +50,20 @@ class ReviewLogicTest {
         assertFalse(isConfigChange(note("PROGRAMMING_REQUEST")))
         assertFalse(isConfigChange(note("TRANSIENT_FLAG")))
         assertFalse(isConfigChange(note("JOURNAL")))
+    }
+
+    @Test fun swap_shows_apply_not_confirm() {
+        val swap = note("CONFIG_CHANGE", ProposedChange(movement = "Bench"))
+        assertTrue(showApply(swap))
+        assertFalse(showConfirm(swap))
+    }
+
+    @Test fun non_swap_shows_confirm_not_apply() {
+        for (cls in listOf("PROGRAMMING_REQUEST", "TRANSIENT_FLAG", "JOURNAL")) {
+            val n = note(cls)
+            assertFalse("expected no Apply for $cls", showApply(n))
+            assertTrue("expected Confirm for $cls", showConfirm(n))
+        }
     }
 
     @Test fun pickerSeedText_uses_proposed_change_movement_or_blank() {

@@ -14,6 +14,12 @@ fun proposedChangeLine(n: NoteReviewOut): String =
  *  affordance. PROGRAMMING_REQUEST etc. stay confirm/dismiss-only. */
 fun isConfigChange(n: NoteReviewOut): Boolean = n.classification == "CONFIG_CHANGE"
 
+/** A swap (CONFIG_CHANGE) shows Apply (which creates the override); a non-swap actionable note
+ *  shows Confirm (acknowledge only). Both always keep Dismiss. Confirm on a swap is meaningless —
+ *  it would leave the inbox without creating the override — so the two are mutually exclusive. */
+fun showApply(n: NoteReviewOut): Boolean = isConfigChange(n)
+fun showConfirm(n: NoteReviewOut): Boolean = !isConfigChange(n)
+
 /** Text to pre-seed the movement-picker search field with, from the note's proposed change. */
 fun pickerSeedText(n: NoteReviewOut): String = n.proposed_change?.movement.orEmpty()
 

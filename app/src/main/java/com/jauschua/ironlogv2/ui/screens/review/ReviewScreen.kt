@@ -179,10 +179,15 @@ private fun ReviewCard(
                 horizontalArrangement = Arrangement.End,
             ) {
                 OutlinedButton(onClick = { onDismiss(note.id) }) { Text("Dismiss") }
-                if (isConfigChange(note)) {
+                // A swap must go through Apply (creates the override); plain Confirm only
+                // acknowledges and would leave the inbox without making the change, so it's hidden
+                // for CONFIG_CHANGE. Non-swap actionable notes keep Confirm. Mutually exclusive.
+                if (showApply(note)) {
                     TextButton(onClick = { onApplyClick(note) }) { Text("Apply") }
                 }
-                TextButton(onClick = { onConfirm(note.id) }) { Text("Confirm") }
+                if (showConfirm(note)) {
+                    TextButton(onClick = { onConfirm(note.id) }) { Text("Confirm") }
+                }
             }
         }
     }
