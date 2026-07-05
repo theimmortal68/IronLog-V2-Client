@@ -39,6 +39,7 @@ import com.jauschua.ironlogv2.ui.screens.history.HistoryScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
 import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
+import com.jauschua.ironlogv2.ui.screens.review.ReviewScreen
 import com.jauschua.ironlogv2.ui.screens.today.TodayScreen
 import com.jauschua.ironlogv2.ui.screens.wizard.WizardScreen
 import com.jauschua.ironlogv2.ui.theme.IronLogV2Theme
@@ -114,6 +115,7 @@ private fun RootScaffold() {
                         }
                     },
                     onHistory = { nav.navigate(Routes.HISTORY) },
+                    onReview = { nav.navigate(Routes.REVIEW) },
                 )
             }
             composable(Routes.MOVEMENTS) {
@@ -175,6 +177,9 @@ private fun RootScaffold() {
                     id = entry.arguments!!.getInt("id"),
                     onBack = { nav.popBackStack() },
                 )
+            }
+            composable(Routes.REVIEW) {
+                ReviewScreen(onBack = { nav.popBackStack() })
             }
         }
     }
