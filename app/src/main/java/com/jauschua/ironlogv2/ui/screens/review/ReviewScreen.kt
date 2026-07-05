@@ -4,6 +4,8 @@ package com.jauschua.ironlogv2.ui.screens.review
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,9 +14,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -158,6 +163,7 @@ private fun ReviewBody(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ReviewCard(
     note: NoteReviewOut,
@@ -176,9 +182,9 @@ private fun ReviewCard(
             if (changeLine.isNotEmpty()) {
                 Text(changeLine, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
                 OutlinedButton(onClick = { onDismiss(note.id) }) { Text("Dismiss") }
                 // A concrete adjustment must go through Apply (creates the override); plain
@@ -234,7 +240,7 @@ private fun OverrideCard(
 }
 
 /** The Apply confirm-wizard: source slot (confirmable/editable) + the action-routed adjustment. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ApplyWizardDialog(
     wizard: ApplyWizardState,
@@ -259,17 +265,16 @@ private fun ApplyWizardDialog(
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         "Slot: ${slotLabel(wizard.selectedSlot)}",
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    TextButton(onClick = { slotPickerOpen = true }) { Text("Change") }
+                    TextButton(onClick = { slotPickerOpen = true }) { Text("Change slot") }
                 }
 
                 when {
@@ -287,11 +292,13 @@ private fun ApplyWizardDialog(
                                 Text("Pick movement")
                             }
                         }
-                        AdjustmentKind.LOAD -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AdjustmentKind.LOAD -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Adjust load:", style = MaterialTheme.typography.bodyMedium)
                             // Both directions: a LOAD_DECREASE note ("too heavy") lowers the load,
                             // LOAD_INCREASE raises it. The server accepts negative load_delta.
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // FlowRow wraps to a second line on narrow (cover) displays instead of
+                            // clipping the last button.
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(-10.0, -5.0, 5.0, 10.0).forEach { delta ->
                                     OutlinedButton(
                                         onClick = { onSubmitLoad(delta, null) },
@@ -306,16 +313,16 @@ private fun ApplyWizardDialog(
                                     label = { Text("Set exact (lb)") },
                                     singleLine = true,
                                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.width(160.dp),
+                                    modifier = Modifier.width(140.dp),
                                 )
                                 val absolute = loadAbsoluteText.toDoubleOrNull()
-                                TextButton(
+                                Button(
                                     onClick = { absolute?.let { onSubmitLoad(null, it) } },
                                     enabled = absolute != null && !wizard.submitting,
                                 ) { Text("Set") }
                             }
                         }
-                        AdjustmentKind.REPS -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AdjustmentKind.REPS -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Set rep target:", style = MaterialTheme.typography.bodyMedium)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
@@ -337,7 +344,7 @@ private fun ApplyWizardDialog(
                             }
                             val low = repLowText.toIntOrNull()
                             val high = repHighText.toIntOrNull()
-                            TextButton(
+                            Button(
                                 onClick = { onSubmitReps(low, high) },
                                 enabled = (low != null || high != null) && !wizard.submitting,
                             ) { Text("Apply") }
@@ -377,23 +384,29 @@ private fun ApplyWizardDialog(
 }
 
 private fun slotLabel(slot: ProgramSlotOut?): String =
-    slot?.let { listOfNotNull(it.day_role, it.tier_label, it.movement_name).joinToString(" · ") } ?: "none selected"
+    slot?.let {
+        listOfNotNull(it.day_role, it.tier_label, it.movement_name?.let(::displayMovementName)).joinToString(" · ")
+    } ?: "none selected"
 
 private fun applyWizardTitle(slot: ProgramSlotOut?): String =
-    slot?.movement_name?.let { "Change $it" } ?: "Confirm slot"
+    slot?.movement_name?.let { "Change ${displayMovementName(it)}" } ?: "Confirm slot"
 
 /** MOVEMENT: "Base → Target"; LOAD: "+10 lb" or "set 225 lb"; REPS: "5–8 reps". */
 private fun overrideSummaryLine(override: OverrideOut): String = when (override.override_type) {
-    "MOVEMENT" -> "${override.movement_name ?: "?"} → ${override.to_movement_name ?: "?"}"
+    "MOVEMENT" -> {
+        val base = override.movement_name?.let(::displayMovementName) ?: "?"
+        val target = override.to_movement_name?.let(::displayMovementName) ?: "?"
+        "$base → $target"
+    }
     "LOAD" -> {
-        val movement = override.movement_name ?: "?"
+        val movement = override.movement_name?.let(::displayMovementName) ?: "?"
         val magnitude = override.load_absolute?.let { "set ${formatNumber(it)} lb" }
             ?: override.load_delta?.let { d -> "${if (d >= 0) "+" else ""}${formatNumber(d)} lb" }
             ?: "load"
         "$movement $magnitude"
     }
     "REPS" -> {
-        val movement = override.movement_name ?: "?"
+        val movement = override.movement_name?.let(::displayMovementName) ?: "?"
         val low = override.rep_low
         val high = override.rep_high
         val range = when {
@@ -404,7 +417,7 @@ private fun overrideSummaryLine(override: OverrideOut): String = when (override.
         }
         "$movement $range"
     }
-    else -> override.movement_name ?: "?"
+    else -> override.movement_name?.let(::displayMovementName) ?: "?"
 }
 
 private fun formatNumber(value: Double): String =
@@ -475,7 +488,7 @@ private fun MovementPickerDialog(
                     else -> LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
                         items(filtered, key = { it.id }) { m ->
                             TextButton(onClick = { onPick(m) }, modifier = Modifier.fillMaxWidth()) {
-                                Text(m.name, modifier = Modifier.fillMaxWidth())
+                                Text(displayMovementName(m.name), modifier = Modifier.fillMaxWidth())
                             }
                         }
                     }

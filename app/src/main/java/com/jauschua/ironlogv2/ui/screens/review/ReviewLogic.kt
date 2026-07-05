@@ -5,10 +5,18 @@ import com.jauschua.ironlogv2.data.api.dto.MovementDto
 import com.jauschua.ironlogv2.data.api.dto.NoteReviewOut
 import com.jauschua.ironlogv2.data.api.dto.ProgramSlotOut
 
+/** Strips a trailing internal equipment/load-code bracket from a movement name for display,
+ *  e.g. "Hip Thrust [HIP_THRUST]" -> "Hip Thrust". Only a bracket anchored at the END of the
+ *  string is removed — brackets elsewhere in the name are left alone. Names with no trailing
+ *  bracket are returned unchanged (trimmed). */
+private val TRAILING_CODE_BRACKET = Regex("""\s*\[[^\]]*\]\s*$""")
+
+fun displayMovementName(name: String): String = name.replace(TRAILING_CODE_BRACKET, "").trim()
+
 /** One-line summary of a proposed change, e.g. "Bench · switch · to incline"; empty if none. */
 fun proposedChangeLine(n: NoteReviewOut): String =
     n.proposed_change?.let { pc ->
-        listOfNotNull(pc.movement, pc.action, pc.params).joinToString(" · ")
+        listOfNotNull(pc.movement?.let(::displayMovementName), pc.action, pc.params).joinToString(" · ")
     }.orEmpty()
 
 /** Only CONFIG_CHANGE proposals name a concrete slot-level change — only these ever get an Apply

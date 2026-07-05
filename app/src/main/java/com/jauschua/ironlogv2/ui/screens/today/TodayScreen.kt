@@ -41,6 +41,7 @@ import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.screens.capture.htSetupLine
+import com.jauschua.ironlogv2.ui.screens.review.displayMovementName
 
 /**
  * Today tab: pick a day (if none is already planned) → generate → review a read-only preview →
@@ -196,7 +197,7 @@ private fun ReadOnlyGroupCard(gi: Int, group: GroupOut) {
 @Composable
 private fun ReadOnlyExerciseBlock(gi: Int, ei: Int, exercise: ExerciseOut) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(exercise.movement_name, style = MaterialTheme.typography.bodyLarge)
+        Text(displayMovementName(exercise.movement_name), style = MaterialTheme.typography.bodyLarge)
         exercise.planned_sets.forEachIndexed { si, set ->
             ReadOnlySetRow(gi, ei, si, set)
         }
