@@ -1,5 +1,6 @@
 package com.jauschua.ironlogv2.ui.screens.capture
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -98,7 +101,7 @@ fun CaptureScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun SessionContent(
     session: SessionDetailResponse,
@@ -130,6 +133,17 @@ private fun SessionContent(
     var setReps by remember(currentPlannedSetId) { mutableStateOf(currentSet?.let(::prefillReps) ?: "") }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
     var setFeltPeak by remember(currentPlannedSetId) { mutableStateOf("") }
+
+    // Scroll-into-view: when the cursor advances to a new set, the accordion re-flows (the
+    // just-logged group collapses, the next one expands) but the LazyColumn itself doesn't
+    // scroll, so the newly-current set's input card can end up off-screen. Bring it into view
+    // whenever the cursor changes. Attached below to the current SetCard's root Modifier.
+    // runCatching guards the case where currentPlannedSetId is null (session fully logged) or
+    // the requester hasn't been laid out yet — both are no-ops, not errors.
+    val currentSetBringIntoViewRequester = remember { BringIntoViewRequester() }
+    LaunchedEffect(currentPlannedSetId) {
+        runCatching { currentSetBringIntoViewRequester.bringIntoView() }
+    }
 
     // Collapsible group cards (accordion follows the cursor). Index of the group that owns the
     // current planned set — the one auto-expanded by default; null when the session is fully
@@ -307,6 +321,11 @@ private fun SessionContent(
 
                             item(key = "set-${plannedSet.id}") {
                                 SetCard(
+                                    modifier = if (isCurrent) {
+                                        Modifier.bringIntoViewRequester(currentSetBringIntoViewRequester)
+                                    } else {
+                                        Modifier
+                                    },
                                     plannedSet = plannedSet,
                                     unilateral = exercise.unilateral,
                                     isCurrent = isCurrent,
@@ -437,6 +456,7 @@ private fun SetCard(
     onTapSelect: (String) -> Unit,
     onFeltPeakChange: (String) -> Unit,
     onLogSet: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     // "Log set" button is DISABLED until a tap is selected for working roles (Gate #2 — client UI).
     val logEnabled = !tapRequired || selectedTap != null
@@ -444,7 +464,10 @@ private fun SetCard(
     // HT (band-composite) working set: plates and/or bands prescribed on this planned set.
     val isHtSet = plannedSet.target_plates != null || plannedSet.band_config != null
 
-    Card(modifier = Modifier.fillMaxWidth().padding(start = 16.dp)) {
+    // [modifier] carries the current set's bringIntoViewRequester (see SessionContent) so the
+    // whole card — including its input fields below — scrolls into view when the cursor lands
+    // on it; a no-op Modifier for non-current cards.
+    Card(modifier = modifier.fillMaxWidth().padding(start = 16.dp)) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
