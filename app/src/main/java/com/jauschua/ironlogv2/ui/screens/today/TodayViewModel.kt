@@ -12,6 +12,7 @@ import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.api.humanMessage
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.data.repo.GenerateRepo
+import com.jauschua.ironlogv2.data.repo.NotesRepo
 import com.jauschua.ironlogv2.ui.Routes
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,12 @@ enum class GenerateOutcomeKind { REVIEWABLE, ERROR }
 fun classifyGenerate(exhausted: Boolean, hasPreview: Boolean): GenerateOutcomeKind =
     if (!exhausted && hasPreview) GenerateOutcomeKind.REVIEWABLE else GenerateOutcomeKind.ERROR
 
+/** Label for the Today screen's Review button: bare "Review" when there's nothing pending, or
+ *  "Review (N)" once a classified note is waiting — pure and file-level so it's unit-testable
+ *  without Compose or the ViewModel. */
+fun reviewButtonLabel(count: Int): String =
+    if (count > 0) "Review ($count)" else "Review"
+
 /** Today tab state machine: pick a day (if none is already planned) → generate → review the
  *  preview → approve → hand off to Capture. */
 sealed interface TodayUiState {
@@ -46,13 +53,18 @@ sealed interface TodayUiState {
 class TodayViewModel(
     private val generateRepo: GenerateRepo,
     private val captureRepo: CaptureRepo,
+    private val notesRepo: NotesRepo,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TodayUiState>(TodayUiState.Loading)
     val state: StateFlow<TodayUiState> = _state.asStateFlow()
 
+    private val _reviewCount = MutableStateFlow(0)
+    val reviewCount: StateFlow<Int> = _reviewCount.asStateFlow()
+
     /** Load the current picture: an already-planned session takes priority (Continue); otherwise
-     *  fall back to the program's day list so the lifter can pick one to generate. */
+     *  fall back to the program's day list so the lifter can pick one to generate. Also refreshes
+     *  the pending-review count (best-effort — never surfaces an error for this). */
     fun load() {
         _state.value = TodayUiState.Loading
         viewModelScope.launch {
@@ -67,6 +79,16 @@ class TodayViewModel(
                     }
                 }
                 .onFailure { e -> _state.value = TodayUiState.GenerateError(errorMessage(e)) }
+        }
+        refreshReviewCount()
+    }
+
+    /** Best-effort fetch of the pending-note count for the Review button badge. Leaves the count
+     *  at its previous value (default 0) on failure — never surfaces an error. */
+    private fun refreshReviewCount() {
+        viewModelScope.launch {
+            notesRepo.review()
+                .onSuccess { notes -> _reviewCount.value = notes.size }
         }
     }
 
@@ -115,6 +137,7 @@ class TodayViewModel(
                 TodayViewModel(
                     generateRepo = app.container.generateRepo,
                     captureRepo = app.container.captureRepo,
+                    notesRepo = app.container.notesRepo,
                 )
             }
         }

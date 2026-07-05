@@ -54,6 +54,7 @@ fun TodayScreen(
     vm: TodayViewModel = viewModel(factory = TodayViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val reviewCount by vm.reviewCount.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -62,7 +63,7 @@ fun TodayScreen(
             TopAppBar(
                 title = { Text("Today") },
                 actions = {
-                    TextButton(onClick = onReview) { Text("Review") }
+                    TextButton(onClick = onReview) { Text(reviewButtonLabel(reviewCount)) }
                     TextButton(onClick = onHistory) { Text("History") }
                 },
             )
