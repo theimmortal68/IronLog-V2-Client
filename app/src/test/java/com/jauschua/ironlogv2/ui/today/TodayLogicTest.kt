@@ -1,8 +1,10 @@
 package com.jauschua.ironlogv2.ui.today
 
+import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.today.GenerateOutcomeKind
 import com.jauschua.ironlogv2.ui.screens.today.classifyGenerate
 import com.jauschua.ironlogv2.ui.screens.today.reviewButtonLabel
+import com.jauschua.ironlogv2.ui.screens.today.targetSummary
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -25,5 +27,26 @@ class TodayLogicTest {
     }
     @Test fun review_label_with_single_pending_shows_badge() {
         assertEquals("Review (1)", reviewButtonLabel(1))
+    }
+
+    // HT (band-composite) sets carry target_plates/band_config/target_felt_peak and no
+    // meaningful target_load — the preview must render the same "plates + bands · peak" line
+    // Capture's SetCard shows, not a blank/raw target_load. Regression coverage for the bug this
+    // branch fixes.
+    @Test fun target_summary_renders_ht_setup_line_for_band_composite_set() {
+        val set = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_plates = 180.0, band_config = listOf(0), target_felt_peak = 225.0,
+            target_rpe = 8.0,
+        )
+        assertEquals("180 plates + Orange · peak ~225 · RPE 8.0", targetSummary(set))
+    }
+
+    @Test fun target_summary_falls_back_to_target_load_for_non_ht_set() {
+        val set = PlannedSetOut(
+            id = 2, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_load = 135.0, target_reps_low = 8,
+        )
+        assertEquals("135.0 · 8 reps", targetSummary(set))
     }
 }

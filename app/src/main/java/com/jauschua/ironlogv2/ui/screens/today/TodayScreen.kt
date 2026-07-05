@@ -40,6 +40,7 @@ import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
+import com.jauschua.ironlogv2.ui.screens.capture.htSetupLine
 
 /**
  * Today tab: pick a day (if none is already planned) → generate → review a read-only preview →
@@ -221,10 +222,21 @@ private fun ReadOnlySetRow(gi: Int, ei: Int, si: Int, set: PlannedSetOut) {
 }
 
 /** A compact "load × reps @ RPE" summary of a planned set's targets, tolerant of any field being
- *  absent (bands/assist/plate-based sets don't all populate the same fields). */
-private fun targetSummary(set: PlannedSetOut): String {
+ *  absent (bands/assist/plate-based sets don't all populate the same fields).
+ *
+ *  HT (band-composite) sets carry target_plates/band_config/target_felt_peak instead of a
+ *  meaningful target_load, so they render via [htSetupLine] — the same helper CaptureScreen's
+ *  [com.jauschua.ironlogv2.ui.screens.capture.SetCard] uses — rather than the raw load number. */
+internal fun targetSummary(set: PlannedSetOut): String {
     val parts = mutableListOf<String>()
-    set.target_load?.let { parts += "$it" }
+    val isHtSet = set.target_plates != null || set.band_config != null
+    if (isHtSet) {
+        htSetupLine(set.target_plates, set.band_config, set.target_felt_peak)
+            .takeIf { it.isNotEmpty() }
+            ?.let { parts += it }
+    } else {
+        set.target_load?.let { parts += "$it" }
+    }
     when {
         set.target_reps_low != null && set.target_reps_high != null ->
             parts += "${set.target_reps_low}-${set.target_reps_high} reps"
