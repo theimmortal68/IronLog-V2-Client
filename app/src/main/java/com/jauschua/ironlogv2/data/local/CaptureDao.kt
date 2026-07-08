@@ -3,12 +3,36 @@ package com.jauschua.ironlogv2.data.local
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 
 @Dao
 interface CaptureDao {
     @Insert suspend fun insertSetLog(d: SetLogDraft)
     @Insert suspend fun insertSurvey(d: SurveyDraft)
     @Insert suspend fun insertNote(d: NoteDraft)
+
+    @Query("DELETE FROM setlog_draft WHERE sessionId = :sessionId AND plannedSetId = :plannedSetId")
+    suspend fun deleteSetLogForPlannedSet(sessionId: Int, plannedSetId: Int)
+
+    /**
+     * Idempotent write, keyed on (sessionId, plannedSetId): re-logging the same planned set
+     * (double-tap, retry, or an explicit correction) replaces its prior row in place rather than
+     * appending a duplicate. Rows with a null [SetLogDraft.plannedSetId] have nothing to key on,
+     * so they always insert as a new row (unchanged behavior). Wrapped in `@Transaction` so the
+     * delete+insert pair commits atomically — a crash between the two can't leave the set
+     * un-logged.
+     *
+     * This is THE fix for the Day-1 double-log incident: 7 planned sets were each submitted
+     * twice (double-tap on "Log set"), producing 7 duplicate rows that double-counted volume on
+     * submit. [insertSetLog] alone (plain `@Insert`) has no dedup, so every call always appended.
+     */
+    @Transaction
+    suspend fun upsertSetLog(d: SetLogDraft) {
+        if (d.plannedSetId != null) {
+            deleteSetLogForPlannedSet(d.sessionId, d.plannedSetId)
+        }
+        insertSetLog(d)
+    }
 
     @Query("SELECT * FROM setlog_draft WHERE sessionId = :sessionId ORDER BY draftId")
     suspend fun setLogsForSession(sessionId: Int): List<SetLogDraft>

@@ -71,6 +71,18 @@ data class GroupReview(
 )
 
 /**
+ * What was actually logged for a planned set (as opposed to its target/prescription). Surfaced
+ * by [CaptureViewModel.loggedSetActuals] so a logged set's card can show "165lb × 6 · ✓ on
+ * target" instead of collapsing back to only the target — see the fix in
+ * [CaptureViewModel.logWorkingSet] / [CaptureViewModel.editLoggedSet].
+ */
+data class LoggedSetActual(
+    val actualLoad: Double?,
+    val actualReps: Int?,
+    val tap: String?,
+)
+
+/**
  * Map each group's cursor-order LAST planned-set id → that group. Groups are contiguous in
  * [flattenPrescription], so a group's final flattened entry marks its completion; when that set
  * is logged and the cursor advances past it, the group is done.
@@ -151,6 +163,16 @@ class CaptureViewModel(
     private val _pendingReview = MutableStateFlow<GroupReview?>(null)
     val pendingReview: StateFlow<GroupReview?> = _pendingReview.asStateFlow()
 
+    /**
+     * Actual load/reps/tap logged for each planned set, keyed by [PlannedSetOut.id] — see
+     * [LoggedSetActual]. Populated from persisted drafts in [load] (so a resumed session shows
+     * real actuals, not just targets) and kept current by [logWorkingSet] / [editLoggedSet] as
+     * sets are logged or corrected. A missing key means that planned set has no logged actual
+     * yet.
+     */
+    private val _loggedSetActuals = MutableStateFlow<Map<Int, LoggedSetActual>>(emptyMap())
+    val loggedSetActuals: StateFlow<Map<Int, LoggedSetActual>> = _loggedSetActuals.asStateFlow()
+
     /** The running rest countdown ticker, if any. Cancelled/replaced by [startRest]/[skipRest]. */
     private var restJob: Job? = null
 
@@ -180,6 +202,9 @@ class CaptureViewModel(
                         restContextBySetId = restContextByPlannedSetId(session.groups)
                         lastSetIdByGroup = lastSetIdByGroup(session.groups)
                         _currentPlannedSetId.value = flattenedPrescription.firstOrNull()?.id
+                        _loggedSetActuals.value = repo.loggedActualsFor(session.id).mapValues { (_, d) ->
+                            LoggedSetActual(d.actualLoad, d.actualReps, d.feedbackTap)
+                        }
                     }
                     _state.value = UiState.Success(session)
                 }
@@ -273,6 +298,13 @@ class CaptureViewModel(
                 feltPeak = feltPeak,
             ),
         )
+        // Surface the actual just committed (see LoggedSetActual) — a logged set's card shows
+        // this instead of collapsing back to only the target. Keyed on plannedSetId; rows with
+        // no planned set (null) have no card to surface actuals on, so there's nothing to record.
+        if (plannedSetId != null) {
+            _loggedSetActuals.value = _loggedSetActuals.value +
+                (plannedSetId to LoggedSetActual(actualLoad, actualReps, tap))
+        }
         // Advance cursor ONLY after the commit — write-before-advance enforced.
         // Uses the globally-unique PlannedSetOut.id (not set_index, which resets per exercise).
         if (plannedSetId != null && plannedSetId in unilateralSetIds && unilateralSideCount == 0) {
@@ -307,6 +339,54 @@ class CaptureViewModel(
                 _pendingReview.value = GroupReview(group, prefill.surveys, prefill.noteText)
             }
         }
+    }
+
+    /**
+     * Correct an already-logged set IN PLACE — re-opens a past set's card, edits load/reps/tap,
+     * re-saves without touching the forward cursor, rest timer, or group-review trigger (those
+     * are [logWorkingSet]'s job for the CURRENT set; this is purely a correction to something
+     * already logged).
+     *
+     * Idempotent for the same reason [logWorkingSet]'s write is: [CaptureRepo.logSet] →
+     * [com.jauschua.ironlogv2.data.local.CaptureDao.upsertSetLog] replaces the prior row for this
+     * [plannedSetId] rather than appending a second one, so this is safe to call repeatedly (e.g.
+     * re-opening and re-saving without changing anything).
+     *
+     * Same mandatory-tap gate as [logWorkingSet]: a working role with a null tap is rejected and
+     * neither the write nor [loggedSetActuals] are updated.
+     */
+    suspend fun editLoggedSet(
+        plannedSetId: Int,
+        movementId: Int,
+        setIndex: Int,
+        setRole: String,
+        actualLoad: Double?,
+        actualReps: Int?,
+        tap: String?,
+        isWarmup: Boolean = false,
+        feltPeak: Double? = null,
+    ) {
+        if (setRole in TAP_REQUIRED && tap == null) {
+            _uiError.value = "Tap required before continuing"
+            return
+        }
+        _uiError.value = null
+        repo.logSet(
+            SetLogDraft(
+                sessionId = sessionId,
+                plannedSetId = plannedSetId,
+                movementId = movementId,
+                setIndex = setIndex,
+                setRole = setRole,
+                isWarmup = isWarmup,
+                actualLoad = actualLoad,
+                actualReps = actualReps,
+                feedbackTap = tap,
+                feltPeak = feltPeak,
+            ),
+        )
+        _loggedSetActuals.value = _loggedSetActuals.value +
+            (plannedSetId to LoggedSetActual(actualLoad, actualReps, tap))
     }
 
     /**

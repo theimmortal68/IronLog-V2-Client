@@ -46,6 +46,9 @@ private class FakeGatedDao(
     val stored: MutableList<SetLogDraft> = mutableListOf(),
 ) : CaptureDao {
     override suspend fun insertSetLog(d: SetLogDraft) { gate.await(); stored.add(d) }
+    override suspend fun deleteSetLogForPlannedSet(sessionId: Int, plannedSetId: Int) {
+        stored.removeAll { it.sessionId == sessionId && it.plannedSetId == plannedSetId }
+    }
     override suspend fun insertSurvey(d: SurveyDraft) {}
     override suspend fun insertNote(d: NoteDraft) {}
     override suspend fun setLogsForSession(sessionId: Int): List<SetLogDraft> =
@@ -339,5 +342,125 @@ class CaptureViewModelTest {
             2,
             vm.currentPlannedSetId.value,
         )
+    }
+
+    // ── Fix B — logged sets expose their actuals and stay editable in place ─────────────────
+
+    /**
+     * A logged set's actual load/reps/tap are exposed via [CaptureViewModel.loggedSetActuals]
+     * (not just the target, which is all the old UI showed). Correcting it via
+     * [CaptureViewModel.editLoggedSet] updates the exposed actual AND the persisted row IN
+     * PLACE — still exactly one Room row for this planned set, not a second one appended.
+     */
+    @Test
+    fun logged_set_exposes_actual_and_edit_round_trip_updates_in_place() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0))
+
+        vm.logWorkingSet(
+            plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 165.0, actualReps = 6, tap = "ON_TARGET",
+        )
+        val logged = vm.loggedSetActuals.value[10]
+        assertEquals(165.0, logged?.actualLoad)
+        assertEquals(6, logged?.actualReps)
+        assertEquals("ON_TARGET", logged?.tap)
+        assertEquals(1, db.captureDao().setLogsForSession(7).size)
+
+        // Correct a mistake: re-open and re-save with different values.
+        vm.editLoggedSet(
+            plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 170.0, actualReps = 5, tap = "TOO_HARD",
+        )
+        val corrected = vm.loggedSetActuals.value[10]
+        assertEquals("edit updates the exposed actual", 170.0, corrected?.actualLoad)
+        assertEquals("edit updates the exposed actual", 5, corrected?.actualReps)
+        assertEquals("edit updates the exposed actual", "TOO_HARD", corrected?.tap)
+        assertEquals(
+            "edit updates the persisted row IN PLACE — still one row, not two",
+            1,
+            db.captureDao().setLogsForSession(7).size,
+        )
+        assertEquals(170.0, db.captureDao().setLogsForSession(7).single().actualLoad)
+    }
+
+    /** [CaptureViewModel.editLoggedSet] never touches the forward cursor — only a correction. */
+    @Test
+    fun editLoggedSet_does_not_move_the_cursor() = runBlocking {
+        val (repo, _) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        val ps1 = PlannedSetOut(id = 11, set_index = 1, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0, ps1))
+
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+        assertEquals(ps1.id, vm.currentPlannedSetId.value)
+
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 105.0, actualReps = 8, tap = "ON_TARGET")
+        assertEquals("cursor must stay put after editing a PAST set", ps1.id, vm.currentPlannedSetId.value)
+    }
+
+    /** Same mandatory-tap gate as [CaptureViewModel.logWorkingSet] applies to edits. */
+    @Test
+    fun editLoggedSet_without_tap_is_rejected_for_working_role() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0))
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 105.0, actualReps = 8, tap = null)
+
+        assertNotNull(vm.uiError.value)
+        assertEquals("rejected edit must not overwrite the prior actual", 100.0, vm.loggedSetActuals.value[10]?.actualLoad)
+        assertEquals(100.0, db.captureDao().setLogsForSession(7).single().actualLoad)
+    }
+
+    // ── Fix J — idempotent set logging: same planned set logged twice → ONE row ─────────────
+
+    /**
+     * Day-1 incident: 7 planned sets were each submitted twice (double-tap), producing 7
+     * duplicate Room rows that double-counted volume on submit. Logging the SAME planned set
+     * twice (whatever the cause — double-tap, retry, race) must upsert in place, not append.
+     */
+    @Test
+    fun logging_same_planned_set_twice_yields_one_row_not_a_duplicate() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        val ps1 = PlannedSetOut(id = 11, set_index = 1, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0, ps1))
+
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+        // Double-submit of the SAME planned set (e.g. a fast double-tap before the button
+        // visually disables, or a retried write after a transient error).
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+
+        assertEquals(
+            "double-submit of the same planned set must not duplicate the row",
+            1,
+            db.captureDao().setLogsForSession(7).size,
+        )
+    }
+
+    /** Directly exercises the DAO-level upsert two different logSet calls for the same key. */
+    @Test
+    fun repo_logSet_upserts_by_session_and_planned_set_id() = runBlocking {
+        val (repo, db) = deps()
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 20, movementId = 3, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 100.0, actualReps = 8, feedbackTap = "ON_TARGET"))
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 20, movementId = 3, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 100.0, actualReps = 8, feedbackTap = "ON_TARGET"))
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("upsert keyed on (sessionId, plannedSetId) — one row survives", 1, rows.size)
     }
 }

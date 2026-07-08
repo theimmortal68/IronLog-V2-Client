@@ -23,8 +23,24 @@ class CaptureRepo(private val apiClient: ApiClient, private val dao: CaptureDao)
         apiClient.http.get("/sessions/$id").body()
     }
 
-    /** Per-set durable write (commits before returning — Room @Insert suspend). */
-    suspend fun logSet(d: SetLogDraft) = dao.insertSetLog(d)
+    /**
+     * Per-set durable write (commits before returning — Room @Transaction suspend).
+     * Idempotent: [CaptureDao.upsertSetLog] replaces any prior row for the same
+     * (sessionId, plannedSetId) rather than appending a duplicate — see its doc comment.
+     */
+    suspend fun logSet(d: SetLogDraft) = dao.upsertSetLog(d)
+
+    /**
+     * Actuals already logged for [sessionId], keyed by planned-set id (rows with a null
+     * plannedSetId are excluded — nothing to key a display card on). Used by
+     * [com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel] to populate logged-set actuals
+     * on [com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel.load], so a resumed session
+     * shows what was actually entered instead of only the target.
+     */
+    suspend fun loggedActualsFor(sessionId: Int): Map<Int, SetLogDraft> =
+        dao.setLogsForSession(sessionId)
+            .filter { it.plannedSetId != null }
+            .associateBy { it.plannedSetId!! }
 
     /** Batch submit. Idempotent + retryable: on success, clear local drafts. */
     suspend fun submit(sessionId: Int): Result<SubmitResponse> = runCatchingApi {
