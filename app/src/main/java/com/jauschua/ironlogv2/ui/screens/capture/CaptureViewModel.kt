@@ -188,6 +188,15 @@ class CaptureViewModel(
      * Load today's planned session.  Called from the screen's [LaunchedEffect] on entry.
      * Sets [sessionId] from the loaded session so [logWorkingSet]/[finish] use the correct id.
      * Tests inject [sessionId] directly and never call this, so they are unaffected.
+     *
+     * Resume-cursor fix (background-kill data-loss bug): the set drafts are already durably
+     * persisted in Room (write-before-advance, see [logWorkingSet]), but when Android recreates
+     * this ViewModel after a process kill, the OLD code reset [_currentPlannedSetId] to the
+     * FIRST set in [flattenedPrescription] — and [pastSetIds] (in CaptureScreen.kt) derives
+     * "logged" purely from cursor position, so the whole session appeared erased even though
+     * nothing was lost. Fixed below by resuming the cursor at the first planned set that is NOT
+     * yet fully logged (by row count — a bilateral set needs 1 row, a unilateral set needs 2),
+     * instead of always the first set.
      */
     fun load() {
         _state.value = UiState.Loading
@@ -198,10 +207,30 @@ class CaptureViewModel(
                         sessionId = session.id
                         flattenedPrescription = flattenPrescription(session.groups)
                         unilateralSetIds = unilateralPlannedSetIds(session.groups)
-                        unilateralSideCount = 0
                         restContextBySetId = restContextByPlannedSetId(session.groups)
                         lastSetIdByGroup = lastSetIdByGroup(session.groups)
-                        _currentPlannedSetId.value = flattenedPrescription.firstOrNull()?.id
+
+                        // Raw draft rows (not the collapsed loggedActualsFor map) so a
+                        // unilateral set's row COUNT can be checked — a bilateral set is fully
+                        // logged at 1 row, a unilateral set needs both sides (2 rows).
+                        val rowCountByPlannedSetId = repo.setLogsForSession(session.id)
+                            .mapNotNull { it.plannedSetId }
+                            .groupingBy { it }
+                            .eachCount()
+                        val resumeSet = flattenedPrescription.firstOrNull { ps ->
+                            val rows = rowCountByPlannedSetId[ps.id] ?: 0
+                            val fullyLogged = if (ps.id in unilateralSetIds) rows >= 2 else rows >= 1
+                            !fullyLogged
+                        }
+                        _currentPlannedSetId.value = resumeSet?.id
+                        // Mid-set resume: a unilateral set with exactly side 1 logged must hold
+                        // the cursor there and expect side 2 next (sideIndex 1), not restart it.
+                        unilateralSideCount = if (resumeSet != null && resumeSet.id in unilateralSetIds) {
+                            (rowCountByPlannedSetId[resumeSet.id] ?: 0).coerceIn(0, 1)
+                        } else {
+                            0
+                        }
+
                         _loggedSetActuals.value = repo.loggedActualsFor(session.id).mapValues { (_, d) ->
                             LoggedSetActual(d.actualLoad, d.actualReps, d.feedbackTap)
                         }

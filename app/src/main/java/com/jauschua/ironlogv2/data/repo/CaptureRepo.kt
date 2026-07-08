@@ -43,6 +43,17 @@ class CaptureRepo(private val apiClient: ApiClient, private val dao: CaptureDao)
             .associateBy { it.plannedSetId!! }
 
     /**
+     * ALL raw draft rows for [sessionId] — unlike [loggedActualsFor] (which collapses to one
+     * "latest" row per plannedSetId), this preserves every row, including both side-rows of a
+     * UNILATERAL set. Used by [com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel.load]
+     * to count how many sides of each planned set are already logged when resuming a session
+     * after process recreation (a bilateral set needs 1 row to be "fully logged"; a unilateral
+     * set needs 2).
+     */
+    suspend fun setLogsForSession(sessionId: Int): List<SetLogDraft> =
+        dao.setLogsForSession(sessionId)
+
+    /**
      * The stored draft for (sessionId, plannedSetId), if any — used by
      * [com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel.editLoggedSet] to preserve
      * unsurfaced actual fields (e.g. felt-peak) across an in-place correction.
