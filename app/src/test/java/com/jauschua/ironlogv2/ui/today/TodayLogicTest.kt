@@ -36,7 +36,7 @@ class TodayLogicTest {
     @Test fun target_summary_renders_ht_setup_line_for_band_composite_set() {
         val set = PlannedSetOut(
             id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
-            target_plates = 180.0, band_config = listOf(0), target_felt_peak = 225.0,
+            target_plates = 180.0, band_config = listOf(1), target_felt_peak = 225.0,  // server id 1 = Orange
             target_rpe = 8.0,
         )
         assertEquals("180 plates + Orange · peak ~225 · RPE 8.0", targetSummary(set))

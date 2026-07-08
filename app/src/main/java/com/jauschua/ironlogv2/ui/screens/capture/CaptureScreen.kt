@@ -63,6 +63,7 @@ fun CaptureScreen(
     val currentPlannedSetId by vm.currentPlannedSetId.collectAsStateWithLifecycle()
     val restRemainingSeconds by vm.restRemainingSeconds.collectAsStateWithLifecycle()
     val pendingReview by vm.pendingReview.collectAsStateWithLifecycle()
+    val loggedSetActuals by vm.loggedSetActuals.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { vm.load() }
@@ -83,7 +84,7 @@ fun CaptureScreen(
                     } else {
                         SessionContent(
                             session, currentPlannedSetId, uiError, submitResult,
-                            restRemainingSeconds, scope, vm,
+                            restRemainingSeconds, loggedSetActuals, scope, vm,
                         )
                     }
                 }
@@ -108,6 +109,7 @@ private fun SessionContent(
     uiError: String?,
     submitResult: String?,
     restRemainingSeconds: Int?,
+    loggedSetActuals: Map<Int, LoggedSetActual>,
     scope: CoroutineScope,
     vm: CaptureViewModel,
 ) {
@@ -121,17 +123,44 @@ private fun SessionContent(
     val pastIds = remember(session, currentPlannedSetId) { pastSetIds(flatSets, currentPlannedSetId) }
     // The planned set the cursor currently points at — source of the pre-fill defaults below.
     val currentSet = remember(session, currentPlannedSetId) { flatSets.find { it.id == currentPlannedSetId } }
+    // The exercise (and its movement_id) that owns the current planned set — used both to key
+    // the carry-forward map below (fix F) and to attribute edits to a movement (fix B).
+    val currentExercise = remember(session, currentPlannedSetId) {
+        session.groups.flatMap { it.exercises }.find { e -> e.planned_sets.any { it.id == currentPlannedSetId } }
+    }
 
     // Session-level note, entered on the Finish screen; anchored to no movement (null) on submit.
     var sessionNote by remember(session.id) { mutableStateOf("") }
 
+    // Fix F — weight carries forward: last load entered per movement_id this session. When a
+    // set's load is entered/changed, later UNLOGGED sets of the SAME exercise pre-fill to it
+    // instead of their own static target_load (see effectiveLoadPrefill/withCarriedLoad). Scoped
+    // to the session (not the cursor) so it survives the cursor advancing across sets.
+    var carriedLoadByMovement by remember(session.id) { mutableStateOf<Map<Int, Double>>(emptyMap()) }
+
     // Input state for the current set; auto-resets (and re-pre-fills) when the cursor advances.
-    // Weight/reps default to the prescription target — the lifter can accept or adjust before
+    // Weight defaults to the carried-forward load for this exercise if one was entered on an
+    // earlier set, else the prescription target (fix F) — the lifter can accept or adjust before
     // logging ("log = accept or adjust").
-    var setLoad by remember(currentPlannedSetId) { mutableStateOf(prefillWeight(currentSet?.target_load)) }
+    var setLoad by remember(currentPlannedSetId) {
+        mutableStateOf(effectiveLoadPrefill(carriedLoadByMovement, currentExercise?.movement_id ?: -1, currentSet?.target_load))
+    }
     var setReps by remember(currentPlannedSetId) { mutableStateOf(currentSet?.let(::prefillReps) ?: "") }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
     var setFeltPeak by remember(currentPlannedSetId) { mutableStateOf("") }
+
+    // Fix B — editable logged sets: which past set's card is currently reopened for correction
+    // (null = none). Only one at a time; re-tapping the same card closes it.
+    var editingSetId by remember { mutableStateOf<Int?>(null) }
+    var editLoad by remember(editingSetId) {
+        mutableStateOf(loggedSetActuals[editingSetId]?.actualLoad?.let(::formatWeight) ?: "")
+    }
+    var editReps by remember(editingSetId) {
+        mutableStateOf(loggedSetActuals[editingSetId]?.actualReps?.toString() ?: "")
+    }
+    var editTap by remember(editingSetId) {
+        mutableStateOf(loggedSetActuals[editingSetId]?.tap)
+    }
 
     // Scroll-into-view: when the cursor advances to a new set, the accordion re-flows (the
     // just-logged group collapses, the next one expands) but the LazyColumn itself doesn't
@@ -339,6 +368,10 @@ private fun SessionContent(
 
                             itemKeys.add("set-${plannedSet.id}")
                             item(key = "set-${plannedSet.id}") {
+                                // Unilateral logged cards are non-editable (see isSetEditable) —
+                                // editing one card would corrupt the hidden other side.
+                                val editable = isSetEditable(isPast, exercise.unilateral)
+                                val isEditing = editable && editingSetId == plannedSet.id
                                 SetCard(
                                     plannedSet = plannedSet,
                                     unilateral = exercise.unilateral,
@@ -349,7 +382,13 @@ private fun SessionContent(
                                     setReps = if (isCurrent) setReps else "",
                                     selectedTap = if (isCurrent) selectedTap else null,
                                     setFeltPeak = if (isCurrent) setFeltPeak else "",
-                                    onLoadChange = { setLoad = it },
+                                    onLoadChange = {
+                                        setLoad = it
+                                        currentExercise?.let { ex ->
+                                            carriedLoadByMovement =
+                                                withCarriedLoad(carriedLoadByMovement, ex.movement_id, it.toDoubleOrNull())
+                                        }
+                                    },
                                     onRepsChange = { setReps = it },
                                     onTapSelect = { selectedTap = it },
                                     onFeltPeakChange = { setFeltPeak = it },
@@ -366,6 +405,35 @@ private fun SessionContent(
                                                 isWarmup = plannedSet.is_warmup,
                                                 feltPeak = setFeltPeak.toDoubleOrNull(),
                                             )
+                                        }
+                                    },
+                                    // Fix B — logged sets show actuals and stay editable.
+                                    loggedActual = loggedSetActuals[plannedSet.id],
+                                    isEditing = isEditing,
+                                    editLoad = if (isEditing) editLoad else "",
+                                    editReps = if (isEditing) editReps else "",
+                                    editTap = if (isEditing) editTap else null,
+                                    onCardTap = {
+                                        if (editable) {
+                                            editingSetId = if (editingSetId == plannedSet.id) null else plannedSet.id
+                                        }
+                                    },
+                                    onEditLoadChange = { editLoad = it },
+                                    onEditRepsChange = { editReps = it },
+                                    onEditTapSelect = { editTap = it },
+                                    onSaveEdit = {
+                                        scope.launch {
+                                            vm.editLoggedSet(
+                                                plannedSetId = plannedSet.id,
+                                                movementId = exercise.movement_id,
+                                                setIndex = plannedSet.set_index,
+                                                setRole = plannedSet.set_role,
+                                                actualLoad = editLoad.toDoubleOrNull(),
+                                                actualReps = editReps.toIntOrNull(),
+                                                tap = editTap,
+                                                isWarmup = plannedSet.is_warmup,
+                                            )
+                                            editingSetId = null
                                         }
                                     },
                                 )
@@ -472,17 +540,38 @@ private fun SetCard(
     onTapSelect: (String) -> Unit,
     onFeltPeakChange: (String) -> Unit,
     onLogSet: () -> Unit,
+    // Fix B — logged sets show actuals and stay editable.
+    loggedActual: LoggedSetActual? = null,
+    isEditing: Boolean = false,
+    editLoad: String = "",
+    editReps: String = "",
+    editTap: String? = null,
+    onCardTap: () -> Unit = {},
+    onEditLoadChange: (String) -> Unit = {},
+    onEditRepsChange: (String) -> Unit = {},
+    onEditTapSelect: (String) -> Unit = {},
+    onSaveEdit: () -> Unit = {},
 ) {
     // "Log set" button is DISABLED until a tap is selected for working roles (Gate #2 — client UI).
     val logEnabled = !tapRequired || selectedTap != null
+    // "Save" (edit round-trip) has the same mandatory-tap gate as the original log.
+    val saveEditEnabled = !tapRequired || editTap != null
 
     // HT (band-composite) working set: plates and/or bands prescribed on this planned set.
     val isHtSet = plannedSet.target_plates != null || plannedSet.band_config != null
 
     // Scroll-into-view for the current set is handled at the LazyColumn level (see
     // SessionContent's listState/itemKeys) — this card no longer carries its own relocation
-    // modifier.
-    Card(modifier = Modifier.fillMaxWidth().padding(start = 16.dp)) {
+    // modifier. A PAST BILATERAL card is tappable to reopen its inputs and correct a mistake
+    // (fix B); the current card isn't (it's already open), not-yet-reached cards aren't (nothing
+    // logged), and UNILATERAL cards aren't (one card fronts two side-rows — editing would corrupt
+    // the hidden side; see isSetEditable, side-aware unilateral edit is a follow-on).
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp)
+            .let { if (isSetEditable(isPast, unilateral)) it.clickable(onClick = onCardTap) else it },
+    ) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -502,6 +591,20 @@ private fun SetCard(
                         text = "✓",
                         color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
+
+            // Fix B — the ACTUAL logged line (prominent) for a past set, e.g.
+            // "165lb × 6 reps · ✓ on target". This is the thing to surface; the target below is
+            // now secondary reference, not the primary display.
+            if (isPast && loggedActual != null) {
+                val actualLine = loggedActualLine(loggedActual.actualLoad, loggedActual.actualReps, loggedActual.tap)
+                if (actualLine.isNotEmpty()) {
+                    Text(
+                        text = "Actual: $actualLine",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
             }
@@ -623,6 +726,55 @@ private fun SetCard(
                     Text("Log set")
                 }
             }
+
+            // Fix B — reopened inputs for a PAST set the athlete tapped to correct. Mirrors the
+            // current-set input block above but writes back via onSaveEdit (editLoggedSet),
+            // which updates the existing row in place rather than advancing the cursor.
+            if (isEditing) {
+                val editRepsLabel = repsInputLabel(plannedSet)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editLoad,
+                        onValueChange = onEditLoadChange,
+                        label = { Text("Load (lb)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = editReps,
+                        onValueChange = onEditRepsChange,
+                        label = { Text(editRepsLabel) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                val taps = listOf("TOO_EASY", "ON_TARGET", "TOO_HARD")
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    taps.forEachIndexed { i, tap ->
+                        SegmentedButton(
+                            selected = editTap == tap,
+                            onClick = { onEditTapSelect(tap) },
+                            shape = SegmentedButtonDefaults.itemShape(index = i, count = taps.size),
+                        ) {
+                            Text(
+                                text = tap.replace('_', ' '),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = onSaveEdit,
+                    enabled = saveEditEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Save correction")
+                }
+            }
         }
     }
 }
@@ -721,6 +873,61 @@ internal fun rpeLabel(rpe: Double?): String? = rpe?.let { "RPE ${formatWeight(it
 
 /** `"Per side"` affordance for a unilateral exercise's set, or null for bilateral exercises. */
 internal fun perSideLabel(unilateral: Boolean): String? = if (unilateral) "Per side" else null
+
+/**
+ * Whether a LOGGED card may be tapped to reopen its inputs for correction (fix B). True only for
+ * a PAST, BILATERAL set. Unilateral sets are deliberately NON-editable for now: one card fronts
+ * TWO rows (sideIndex 0 and 1), but `editLoggedSet`/`loggedSetActuals`/`existingLog` are keyed by
+ * `plannedSetId` alone, so an edit would read side 1 (smallest draftId) and overwrite it with the
+ * side-2 value the card displays — corrupting side 1. Display of the logged actual stays on
+ * unilateral cards (see the `Actual:` line in [SetCard]); only tap-to-edit is gated off.
+ *
+ * Side-aware unilateral edit = follow-on: the real fix is keying loggedSetActuals / editingSetId /
+ * existingLog by `(plannedSetId, sideIndex)` end-to-end plus per-side cards. Not built here.
+ */
+internal fun isSetEditable(isPast: Boolean, unilateral: Boolean): Boolean = isPast && !unilateral
+
+/** Short result label for a logged set's tap, or null when no tap was recorded (e.g. warmup). */
+internal fun tapResultLabel(tap: String?): String? = when (tap) {
+    "TOO_EASY" -> "↓ easy"
+    "ON_TARGET" -> "✓ on target"
+    "TOO_HARD" -> "↑ hard"
+    else -> null
+}
+
+/**
+ * `"165lb × 6 reps · ✓ on target"` — the ACTUAL logged line for a set card (fix B). Previously a
+ * logged set collapsed to showing only its target, hiding what was actually entered; this is the
+ * line that replaces/precedes the target once a set is past. Missing pieces (no load, no reps, no
+ * tap — e.g. a warmup) are simply omitted, never rendered as `"null"`.
+ */
+internal fun loggedActualLine(actualLoad: Double?, actualReps: Int?, tap: String?): String {
+    val loadPart = actualLoad?.let { "${formatWeight(it)}lb" }
+    val repsPart = actualReps?.let { "$it reps" }
+    val loadReps = listOfNotNull(loadPart, repsPart).joinToString(" × ")
+    return listOfNotNull(loadReps.takeIf { it.isNotEmpty() }, tapResultLabel(tap)).joinToString(" · ")
+}
+
+/**
+ * Effective load pre-fill for an UNLOGGED set belonging to [movementId] (fix F): the
+ * carried-forward load entered on an earlier set of the SAME exercise this session (see
+ * [withCarriedLoad]) if one exists, else the set's own prescribed [targetLoad]. Never applied to
+ * already-logged sets — those show their real actual via [loggedActualLine] instead.
+ */
+internal fun effectiveLoadPrefill(carriedLoad: Map<Int, Double>, movementId: Int, targetLoad: Double?): String =
+    prefillWeight(carriedLoad[movementId] ?: targetLoad)
+
+/**
+ * Records [newLoad] as the carried-forward default for [movementId] (fix F) — later unlogged
+ * sets of the SAME exercise pre-fill to this value instead of reverting to their own prescribed
+ * target. This is the direct fix for the Day-1 mis-log where set 3 reverted to the prescribed
+ * 170 after sets 1-2 were bumped to 175: each set's input pre-filled only from its own static
+ * `target_load`, with no memory of what the lifter had already entered for this exercise.
+ * A no-op (returns [carriedLoad] unchanged) when [newLoad] is null — clearing the input field
+ * shouldn't blank out the default for sets not yet reached.
+ */
+internal fun withCarriedLoad(carriedLoad: Map<Int, Double>, movementId: Int, newLoad: Double?): Map<Int, Double> =
+    if (newLoad == null) carriedLoad else carriedLoad + (movementId to newLoad)
 
 /**
  * Shoe-swap cue decision for a group boundary: the shoe to swap TO (rendered as a

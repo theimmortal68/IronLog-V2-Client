@@ -46,6 +46,11 @@ private class FakeGatedDao(
     val stored: MutableList<SetLogDraft> = mutableListOf(),
 ) : CaptureDao {
     override suspend fun insertSetLog(d: SetLogDraft) { gate.await(); stored.add(d) }
+    override suspend fun deleteSetLogForPlannedSetSide(sessionId: Int, plannedSetId: Int, sideIndex: Int) {
+        stored.removeAll { it.sessionId == sessionId && it.plannedSetId == plannedSetId && it.sideIndex == sideIndex }
+    }
+    override suspend fun setLogForPlannedSet(sessionId: Int, plannedSetId: Int): SetLogDraft? =
+        stored.filter { it.sessionId == sessionId && it.plannedSetId == plannedSetId }.minByOrNull { it.draftId }
     override suspend fun insertSurvey(d: SurveyDraft) {}
     override suspend fun insertNote(d: NoteDraft) {}
     override suspend fun setLogsForSession(sessionId: Int): List<SetLogDraft> =
@@ -339,5 +344,258 @@ class CaptureViewModelTest {
             2,
             vm.currentPlannedSetId.value,
         )
+    }
+
+    // ── Fix B — logged sets expose their actuals and stay editable in place ─────────────────
+
+    /**
+     * A logged set's actual load/reps/tap are exposed via [CaptureViewModel.loggedSetActuals]
+     * (not just the target, which is all the old UI showed). Correcting it via
+     * [CaptureViewModel.editLoggedSet] updates the exposed actual AND the persisted row IN
+     * PLACE — still exactly one Room row for this planned set, not a second one appended.
+     */
+    @Test
+    fun logged_set_exposes_actual_and_edit_round_trip_updates_in_place() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0))
+
+        vm.logWorkingSet(
+            plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 165.0, actualReps = 6, tap = "ON_TARGET",
+        )
+        val logged = vm.loggedSetActuals.value[10]
+        assertEquals(165.0, logged?.actualLoad)
+        assertEquals(6, logged?.actualReps)
+        assertEquals("ON_TARGET", logged?.tap)
+        assertEquals(1, db.captureDao().setLogsForSession(7).size)
+
+        // Correct a mistake: re-open and re-save with different values.
+        vm.editLoggedSet(
+            plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 170.0, actualReps = 5, tap = "TOO_HARD",
+        )
+        val corrected = vm.loggedSetActuals.value[10]
+        assertEquals("edit updates the exposed actual", 170.0, corrected?.actualLoad)
+        assertEquals("edit updates the exposed actual", 5, corrected?.actualReps)
+        assertEquals("edit updates the exposed actual", "TOO_HARD", corrected?.tap)
+        assertEquals(
+            "edit updates the persisted row IN PLACE — still one row, not two",
+            1,
+            db.captureDao().setLogsForSession(7).size,
+        )
+        assertEquals(170.0, db.captureDao().setLogsForSession(7).single().actualLoad)
+    }
+
+    /** [CaptureViewModel.editLoggedSet] never touches the forward cursor — only a correction. */
+    @Test
+    fun editLoggedSet_does_not_move_the_cursor() = runBlocking {
+        val (repo, _) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        val ps1 = PlannedSetOut(id = 11, set_index = 1, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0, ps1))
+
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+        assertEquals(ps1.id, vm.currentPlannedSetId.value)
+
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 105.0, actualReps = 8, tap = "ON_TARGET")
+        assertEquals("cursor must stay put after editing a PAST set", ps1.id, vm.currentPlannedSetId.value)
+    }
+
+    /** Same mandatory-tap gate as [CaptureViewModel.logWorkingSet] applies to edits. */
+    @Test
+    fun editLoggedSet_without_tap_is_rejected_for_working_role() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0))
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 105.0, actualReps = 8, tap = null)
+
+        assertNotNull(vm.uiError.value)
+        assertEquals("rejected edit must not overwrite the prior actual", 100.0, vm.loggedSetActuals.value[10]?.actualLoad)
+        assertEquals(100.0, db.captureDao().setLogsForSession(7).single().actualLoad)
+    }
+
+    // ── Fix J — idempotent set logging: same planned set logged twice → ONE row ─────────────
+
+    /**
+     * Day-1 incident: 7 planned sets were each submitted twice (double-tap), producing 7
+     * duplicate Room rows that double-counted volume on submit. Logging the SAME planned set
+     * twice (whatever the cause — double-tap, retry, race) must upsert in place, not append.
+     */
+    @Test
+    fun logging_same_planned_set_twice_yields_one_row_not_a_duplicate() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        val ps1 = PlannedSetOut(id = 11, set_index = 1, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0, ps1))
+
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+        // Double-submit of the SAME planned set (e.g. a fast double-tap before the button
+        // visually disables, or a retried write after a transient error).
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+
+        assertEquals(
+            "double-submit of the same planned set must not duplicate the row",
+            1,
+            db.captureDao().setLogsForSession(7).size,
+        )
+    }
+
+    /** Directly exercises the DAO-level upsert two different logSet calls for the same key. */
+    @Test
+    fun repo_logSet_upserts_by_session_and_planned_set_id() = runBlocking {
+        val (repo, db) = deps()
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 20, movementId = 3, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 100.0, actualReps = 8, feedbackTap = "ON_TARGET"))
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 20, movementId = 3, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 100.0, actualReps = 8, feedbackTap = "ON_TARGET"))
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("upsert keyed on (sessionId, plannedSetId) — one row survives", 1, rows.size)
+    }
+
+    // ── Fix J (unilateral): side discriminator — both sides survive, same-side dedups ────────
+
+    /**
+     * Regression guard for the review-flagged over-collapse: a UNILATERAL set logs two rows
+     * under the SAME plannedSetId (side 1 + side 2). The upsert is keyed on
+     * (sessionId, plannedSetId, sideIndex), so BOTH sides must survive locally — losing side 1's
+     * actual on the side-2 write is the exact bug being prevented. Both rows must then reach
+     * submit() (2 SetLogIn entries), preserving volume.
+     */
+    @Test
+    fun unilateral_set_keeps_both_sides_locally_and_both_reach_submit() = runBlocking {
+        var capturedBody: String? = null
+        val engine = MockEngine { req ->
+            capturedBody = (req.body as io.ktor.http.content.TextContent).text
+            respond("""{"session_id":7,"status":"COMPLETED","set_logs_written":2,"already_completed":false}""",
+                HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext<Context>(), CaptureDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val repo = CaptureRepo(ApiClient(engine = engine), db.captureDao())
+        val vm = CaptureViewModel(repo, sessionId = 7)
+
+        val eUni = exercise(id = 1, idBase = 1, rounds = 1, unilateral = true) // planned_sets = [id=1]
+        val group = GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1, exercises = listOf(eUni))
+        vm.initPrescriptionForTestFromGroups(listOf(group))
+
+        // Side 1 (left) then side 2 (right) — distinct actuals.
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 50.0, actualReps = 8, tap = "ON_TARGET")
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 48.0, actualReps = 7, tap = "ON_TARGET")
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("both unilateral sides must survive locally", 2, rows.size)
+        assertEquals("side 1 and side 2 loads both present",
+            setOf(50.0, 48.0), rows.mapNotNull { it.actualLoad }.toSet())
+        assertEquals("sides distinguished by sideIndex 0/1", setOf(0, 1), rows.map { it.sideIndex }.toSet())
+
+        repo.submit(7)
+        // Two set-log entries in the payload — one per side (volume preserved).
+        val occurrences = Regex("\"planned_set_id\":1\\b").findAll(capturedBody!!).count()
+        assertEquals("both sides reach submit()", 2, occurrences)
+    }
+
+    /**
+     * A double-tap of the SAME side (same plannedSetId + same sideIndex) still collapses to one
+     * row — the dedup we want, at the persistence layer where "side" is unambiguous. (At the VM
+     * level a unilateral set is a deliberate two-tap side-1-then-side-2, so this same-side
+     * guarantee is enforced by the (sessionId, plannedSetId, sideIndex) key, exercised here.)
+     */
+    @Test
+    fun double_submit_of_same_unilateral_side_stays_one_row() = runBlocking {
+        val (repo, db) = deps()
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 1, movementId = 1, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 50.0, actualReps = 8,
+            feedbackTap = "ON_TARGET", sideIndex = 0))
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 1, movementId = 1, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 50.0, actualReps = 8,
+            feedbackTap = "ON_TARGET", sideIndex = 0))
+        // A DIFFERENT side is a distinct row.
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 1, movementId = 1, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 48.0, actualReps = 7,
+            feedbackTap = "ON_TARGET", sideIndex = 1))
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("same-side double-submit collapses; the other side survives", 2, rows.size)
+    }
+
+    // ── Fix J (edit): a correction must not wipe unsurfaced actuals (felt-peak) ──────────────
+
+    /**
+     * Because the upsert is a full-row replace and the edit UI only surfaces load/reps/tap,
+     * [CaptureViewModel.editLoggedSet] must carry the original row's felt-peak (an HT/band-
+     * composite set's real signal) into the corrected row — editing load must not null it.
+     */
+    @Test
+    fun editing_an_ht_set_load_preserves_its_felt_peak() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0))
+
+        // Log an HT set WITH a felt-peak.
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 6, tap = "ON_TARGET", feltPeak = 255.0)
+        assertEquals(255.0, db.captureDao().setLogsForSession(7).single().feltPeak)
+
+        // Correct just the load (edit UI never surfaces felt-peak → passes null).
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 170.0, actualReps = 6, tap = "ON_TARGET")
+
+        val row = db.captureDao().setLogsForSession(7).single()
+        assertEquals("load corrected", 170.0, row.actualLoad)
+        assertEquals("felt-peak preserved across the edit — not nulled", 255.0, row.feltPeak)
+    }
+
+    // ── Fix B (review): unilateral edit is gated — editLoggedSet must not corrupt side 1 ─────
+
+    /**
+     * A unilateral set logs TWO rows (side 1 + side 2) under one plannedSetId. The B edit path
+     * is keyed by plannedSetId alone, so `editLoggedSet` would read side 1 (smallest draftId) and
+     * overwrite it with the correction — corrupting side 1 while leaving side 2 untouched. The UI
+     * disables tap-to-edit for unilateral cards (isSetEditable); this asserts the matching VM
+     * safety net: editLoggedSet is a no-op for a unilateral plannedSetId — both side rows and
+     * their actuals are left exactly as logged.
+     */
+    @Test
+    fun editLoggedSet_is_a_noop_for_a_unilateral_planned_set() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val eUni = exercise(id = 1, idBase = 1, rounds = 1, unilateral = true) // planned_sets = [id=1]
+        val group = GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1, exercises = listOf(eUni))
+        vm.initPrescriptionForTestFromGroups(listOf(group))
+
+        // Log both sides — distinct actuals.
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 50.0, actualReps = 8, tap = "ON_TARGET")
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 48.0, actualReps = 7, tap = "ON_TARGET")
+        assertEquals(2, db.captureDao().setLogsForSession(7).size)
+
+        // Attempt to edit the unilateral card — must be refused (no write).
+        vm.editLoggedSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 999.0, actualReps = 1, tap = "TOO_HARD")
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("edit must not add/remove a row", 2, rows.size)
+        assertEquals("both original side loads intact — no corruption",
+            setOf(50.0, 48.0), rows.mapNotNull { it.actualLoad }.toSet())
+        assertNull("no 999 correction written", rows.firstOrNull { it.actualLoad == 999.0 })
     }
 }

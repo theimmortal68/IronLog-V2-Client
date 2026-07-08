@@ -5,12 +5,15 @@ import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.capture.bandNames
+import com.jauschua.ironlogv2.ui.screens.capture.effectiveLoadPrefill
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import com.jauschua.ironlogv2.ui.screens.capture.formatRepsTarget
 import com.jauschua.ironlogv2.ui.screens.capture.groupProgressHint
 import com.jauschua.ironlogv2.ui.screens.capture.htObservedPeak
 import com.jauschua.ironlogv2.ui.screens.capture.htReconfigure
 import com.jauschua.ironlogv2.ui.screens.capture.htSetupLine
+import com.jauschua.ironlogv2.ui.screens.capture.isSetEditable
+import com.jauschua.ironlogv2.ui.screens.capture.loggedActualLine
 import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
 import com.jauschua.ironlogv2.ui.screens.capture.prefillReps
@@ -19,6 +22,8 @@ import com.jauschua.ironlogv2.ui.screens.capture.repsInputLabel
 import com.jauschua.ironlogv2.ui.screens.capture.repsTargetLabel
 import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
 import com.jauschua.ironlogv2.ui.screens.capture.shoeTransition
+import com.jauschua.ironlogv2.ui.screens.capture.tapResultLabel
+import com.jauschua.ironlogv2.ui.screens.capture.withCarriedLoad
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -356,12 +361,13 @@ class CaptureScreenLogicTest {
 
     @Test
     fun bandNames_maps_ids_to_names_in_order() {
-        assertEquals(listOf("Orange", "Red"), bandNames(listOf(0, 1)))
+        // server BandPair ids are 1-based: Orange=1, Red=2 (regression: id 1 must be Orange, not Red)
+        assertEquals(listOf("Orange", "Red"), bandNames(listOf(1, 2)))
     }
 
     @Test
     fun bandNames_skips_out_of_range_ids_defensively() {
-        assertEquals(listOf("Orange"), bandNames(listOf(0, 99)))
+        assertEquals(listOf("Orange"), bandNames(listOf(1, 0, 99)))  // 1=Orange; 0 and 99 out of range -> dropped
     }
 
     @Test
@@ -376,7 +382,7 @@ class CaptureScreenLogicTest {
     fun htSetupLine_composes_plates_bands_and_peak() {
         assertEquals(
             "166 plates + Orange, Red · peak ~250",
-            htSetupLine(plates = 166.0, config = listOf(0, 1), targetFeltPeak = 250.0),
+            htSetupLine(plates = 166.0, config = listOf(1, 2), targetFeltPeak = 250.0),
         )
     }
 
@@ -387,11 +393,95 @@ class CaptureScreenLogicTest {
 
     @Test
     fun htSetupLine_bands_only() {
-        assertEquals("Orange, Red", htSetupLine(plates = null, config = listOf(0, 1), targetFeltPeak = null))
+        assertEquals("Orange, Red", htSetupLine(plates = null, config = listOf(1, 2), targetFeltPeak = null))
     }
 
     @Test
     fun htSetupLine_peak_only() {
         assertEquals("peak ~250", htSetupLine(plates = null, config = null, targetFeltPeak = 250.0))
+    }
+
+    // ── Fix B: loggedActualLine — the ACTUAL logged line for a past set's card ─────────────
+
+    @Test
+    fun loggedActualLine_composes_load_reps_and_tap() {
+        assertEquals("165lb × 6 reps · ✓ on target", loggedActualLine(165.0, 6, "ON_TARGET"))
+    }
+
+    @Test
+    fun loggedActualLine_too_easy_and_too_hard_labels() {
+        assertEquals("155lb × 8 reps · ↓ easy", loggedActualLine(155.0, 8, "TOO_EASY"))
+        assertEquals("175lb × 4 reps · ↑ hard", loggedActualLine(175.0, 4, "TOO_HARD"))
+    }
+
+    @Test
+    fun loggedActualLine_omits_missing_pieces_never_shows_null() {
+        assertEquals("6 reps", loggedActualLine(null, 6, null))
+        assertEquals("165lb", loggedActualLine(165.0, null, null))
+        assertEquals("", loggedActualLine(null, null, null))
+    }
+
+    @Test
+    fun tapResultLabel_null_for_unknown_or_missing_tap() {
+        assertNull(tapResultLabel(null))
+    }
+
+    // ── Fix B (review): unilateral logged cards are NOT tap-to-editable ────────────────────
+    // A unilateral card fronts two side-rows keyed only by plannedSetId here, so editing would
+    // overwrite the hidden side. Editing stays available for past BILATERAL sets only.
+
+    @Test
+    fun isSetEditable_true_for_past_bilateral_set() {
+        assertEquals(true, isSetEditable(isPast = true, unilateral = false))
+    }
+
+    @Test
+    fun isSetEditable_false_for_past_unilateral_set() {
+        assertEquals(false, isSetEditable(isPast = true, unilateral = true))
+    }
+
+    @Test
+    fun isSetEditable_false_when_not_yet_logged() {
+        assertEquals(false, isSetEditable(isPast = false, unilateral = false))
+        assertEquals(false, isSetEditable(isPast = false, unilateral = true))
+    }
+
+    // ── Fix F: weight carries forward — enter 175 on set 1, sets 2 & 3 default to 175 ──────
+
+    @Test
+    fun withCarriedLoad_records_the_new_load_for_the_movement() {
+        val carried = withCarriedLoad(emptyMap(), movementId = 5, newLoad = 175.0)
+        assertEquals(mapOf(5 to 175.0), carried)
+    }
+
+    @Test
+    fun withCarriedLoad_is_a_noop_when_new_load_is_null_clearing_the_field() {
+        val carried = withCarriedLoad(mapOf(5 to 175.0), movementId = 5, newLoad = null)
+        assertEquals("clearing the input must not blank the carried default for later sets", mapOf(5 to 175.0), carried)
+    }
+
+    @Test
+    fun withCarriedLoad_does_not_affect_other_movements() {
+        val carried = withCarriedLoad(mapOf(9 to 50.0), movementId = 5, newLoad = 175.0)
+        assertEquals(mapOf(9 to 50.0, 5 to 175.0), carried)
+    }
+
+    @Test
+    fun effectiveLoadPrefill_uses_carried_load_over_the_sets_own_target() {
+        // Day-1 scenario: prescribed 170, athlete enters 175 on set 1 -> set 3 (still
+        // prescribed 170 on the server) must prefill 175, not revert to 170.
+        val carried = mapOf(5 to 175.0)
+        assertEquals("175", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 170.0))
+    }
+
+    @Test
+    fun effectiveLoadPrefill_falls_back_to_target_when_nothing_carried_yet() {
+        assertEquals("170", effectiveLoadPrefill(emptyMap(), movementId = 5, targetLoad = 170.0))
+    }
+
+    @Test
+    fun effectiveLoadPrefill_falls_back_to_target_for_a_different_movement() {
+        val carried = mapOf(9 to 50.0) // carried for a DIFFERENT exercise
+        assertEquals("170", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 170.0))
     }
 }
