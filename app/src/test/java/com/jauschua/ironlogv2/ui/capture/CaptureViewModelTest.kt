@@ -562,4 +562,40 @@ class CaptureViewModelTest {
         assertEquals("load corrected", 170.0, row.actualLoad)
         assertEquals("felt-peak preserved across the edit — not nulled", 255.0, row.feltPeak)
     }
+
+    // ── Fix B (review): unilateral edit is gated — editLoggedSet must not corrupt side 1 ─────
+
+    /**
+     * A unilateral set logs TWO rows (side 1 + side 2) under one plannedSetId. The B edit path
+     * is keyed by plannedSetId alone, so `editLoggedSet` would read side 1 (smallest draftId) and
+     * overwrite it with the correction — corrupting side 1 while leaving side 2 untouched. The UI
+     * disables tap-to-edit for unilateral cards (isSetEditable); this asserts the matching VM
+     * safety net: editLoggedSet is a no-op for a unilateral plannedSetId — both side rows and
+     * their actuals are left exactly as logged.
+     */
+    @Test
+    fun editLoggedSet_is_a_noop_for_a_unilateral_planned_set() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val eUni = exercise(id = 1, idBase = 1, rounds = 1, unilateral = true) // planned_sets = [id=1]
+        val group = GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1, exercises = listOf(eUni))
+        vm.initPrescriptionForTestFromGroups(listOf(group))
+
+        // Log both sides — distinct actuals.
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 50.0, actualReps = 8, tap = "ON_TARGET")
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 48.0, actualReps = 7, tap = "ON_TARGET")
+        assertEquals(2, db.captureDao().setLogsForSession(7).size)
+
+        // Attempt to edit the unilateral card — must be refused (no write).
+        vm.editLoggedSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 999.0, actualReps = 1, tap = "TOO_HARD")
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("edit must not add/remove a row", 2, rows.size)
+        assertEquals("both original side loads intact — no corruption",
+            setOf(50.0, 48.0), rows.mapNotNull { it.actualLoad }.toSet())
+        assertNull("no 999 correction written", rows.firstOrNull { it.actualLoad == 999.0 })
+    }
 }

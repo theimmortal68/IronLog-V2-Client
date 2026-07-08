@@ -368,7 +368,10 @@ private fun SessionContent(
 
                             itemKeys.add("set-${plannedSet.id}")
                             item(key = "set-${plannedSet.id}") {
-                                val isEditing = isPast && editingSetId == plannedSet.id
+                                // Unilateral logged cards are non-editable (see isSetEditable) —
+                                // editing one card would corrupt the hidden other side.
+                                val editable = isSetEditable(isPast, exercise.unilateral)
+                                val isEditing = editable && editingSetId == plannedSet.id
                                 SetCard(
                                     plannedSet = plannedSet,
                                     unilateral = exercise.unilateral,
@@ -411,7 +414,7 @@ private fun SessionContent(
                                     editReps = if (isEditing) editReps else "",
                                     editTap = if (isEditing) editTap else null,
                                     onCardTap = {
-                                        if (isPast) {
+                                        if (editable) {
                                             editingSetId = if (editingSetId == plannedSet.id) null else plannedSet.id
                                         }
                                     },
@@ -559,14 +562,15 @@ private fun SetCard(
 
     // Scroll-into-view for the current set is handled at the LazyColumn level (see
     // SessionContent's listState/itemKeys) — this card no longer carries its own relocation
-    // modifier. A PAST card is tappable to reopen its inputs and correct a mistake (fix B);
-    // the current card isn't (it's already open) and neither are not-yet-reached cards
-    // (nothing logged yet to correct).
+    // modifier. A PAST BILATERAL card is tappable to reopen its inputs and correct a mistake
+    // (fix B); the current card isn't (it's already open), not-yet-reached cards aren't (nothing
+    // logged), and UNILATERAL cards aren't (one card fronts two side-rows — editing would corrupt
+    // the hidden side; see isSetEditable, side-aware unilateral edit is a follow-on).
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 16.dp)
-            .let { if (isPast) it.clickable(onClick = onCardTap) else it },
+            .let { if (isSetEditable(isPast, unilateral)) it.clickable(onClick = onCardTap) else it },
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -869,6 +873,19 @@ internal fun rpeLabel(rpe: Double?): String? = rpe?.let { "RPE ${formatWeight(it
 
 /** `"Per side"` affordance for a unilateral exercise's set, or null for bilateral exercises. */
 internal fun perSideLabel(unilateral: Boolean): String? = if (unilateral) "Per side" else null
+
+/**
+ * Whether a LOGGED card may be tapped to reopen its inputs for correction (fix B). True only for
+ * a PAST, BILATERAL set. Unilateral sets are deliberately NON-editable for now: one card fronts
+ * TWO rows (sideIndex 0 and 1), but `editLoggedSet`/`loggedSetActuals`/`existingLog` are keyed by
+ * `plannedSetId` alone, so an edit would read side 1 (smallest draftId) and overwrite it with the
+ * side-2 value the card displays — corrupting side 1. Display of the logged actual stays on
+ * unilateral cards (see the `Actual:` line in [SetCard]); only tap-to-edit is gated off.
+ *
+ * Side-aware unilateral edit = follow-on: the real fix is keying loggedSetActuals / editingSetId /
+ * existingLog by `(plannedSetId, sideIndex)` end-to-end plus per-side cards. Not built here.
+ */
+internal fun isSetEditable(isPast: Boolean, unilateral: Boolean): Boolean = isPast && !unilateral
 
 /** Short result label for a logged set's tap, or null when no tap was recorded (e.g. warmup). */
 internal fun tapResultLabel(tap: String?): String? = when (tap) {

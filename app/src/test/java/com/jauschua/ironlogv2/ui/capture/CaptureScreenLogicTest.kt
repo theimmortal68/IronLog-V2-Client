@@ -12,6 +12,7 @@ import com.jauschua.ironlogv2.ui.screens.capture.groupProgressHint
 import com.jauschua.ironlogv2.ui.screens.capture.htObservedPeak
 import com.jauschua.ironlogv2.ui.screens.capture.htReconfigure
 import com.jauschua.ironlogv2.ui.screens.capture.htSetupLine
+import com.jauschua.ironlogv2.ui.screens.capture.isSetEditable
 import com.jauschua.ironlogv2.ui.screens.capture.loggedActualLine
 import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
@@ -423,6 +424,26 @@ class CaptureScreenLogicTest {
     @Test
     fun tapResultLabel_null_for_unknown_or_missing_tap() {
         assertNull(tapResultLabel(null))
+    }
+
+    // ── Fix B (review): unilateral logged cards are NOT tap-to-editable ────────────────────
+    // A unilateral card fronts two side-rows keyed only by plannedSetId here, so editing would
+    // overwrite the hidden side. Editing stays available for past BILATERAL sets only.
+
+    @Test
+    fun isSetEditable_true_for_past_bilateral_set() {
+        assertEquals(true, isSetEditable(isPast = true, unilateral = false))
+    }
+
+    @Test
+    fun isSetEditable_false_for_past_unilateral_set() {
+        assertEquals(false, isSetEditable(isPast = true, unilateral = true))
+    }
+
+    @Test
+    fun isSetEditable_false_when_not_yet_logged() {
+        assertEquals(false, isSetEditable(isPast = false, unilateral = false))
+        assertEquals(false, isSetEditable(isPast = false, unilateral = true))
     }
 
     // ── Fix F: weight carries forward — enter 175 on set 1, sets 2 & 3 default to 175 ──────

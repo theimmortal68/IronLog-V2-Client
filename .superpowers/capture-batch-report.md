@@ -25,14 +25,35 @@ editable), F (weight carries forward), J (idempotent set logging / no double-sub
     style line for a past set's card.
   - `SetCard` now renders `Actual: ...` (primary, prominent) above the existing `Target: ...`
     (now secondary reference) for logged (`isPast`) sets.
-  - A past card is `clickable` to reopen an edit block (load/reps/tap inputs + "Save
-    correction" button), which calls `vm.editLoggedSet(...)`. Editing state (`editingSetId`,
+  - A past **bilateral** card is `clickable` to reopen an edit block (load/reps/tap inputs +
+    "Save correction" button), which calls `vm.editLoggedSet(...)`. Editing state (`editingSetId`,
     `editLoad`, `editReps`, `editTap`) lives in `SessionContent`, prefilled from
     `loggedSetActuals[editingSetId]` when a card is opened.
-  - Known limitation: a **unilateral** set logs two rows (side 1 + side 2) under one
-    `plannedSetId`; `loggedSetActuals` only keeps the latest write, so the card shows side 2's
-    actual only. Not explicitly in scope for this batch; flagging for a follow-up if unilateral
-    per-side actuals need to be shown separately.
+  - **Unilateral logged cards are NON-editable** (review fix — see below). Their logged-actual
+    DISPLAY is kept (the `Actual:` line still shows); only tap-to-edit is gated off.
+
+### Unilateral edit gate (review CRITICAL fix)
+
+A unilateral set logs TWO rows (sideIndex 0 + 1) under one `plannedSetId`, but B's edit path
+(`editLoggedSet` / `loggedSetActuals` / `existingLog`) is keyed by `plannedSetId` alone. So the
+ordinary "tap a past card → fix a typo" flow on a unilateral card would read side 1 (smallest
+`draftId`) via `existingLog` and write the correction back with `sideIndex = 0` — silently
+overwriting side 1's real data with the side-2 value the card displays, leaving side 2 untouched.
+Fix (minimal + safe), gated at two layers:
+
+- `CaptureScreen.kt` — new pure `isSetEditable(isPast, unilateral) = isPast && !unilateral`. The
+  logged card's `clickable` and its `onCardTap`/`isEditing` are all driven by it, so a unilateral
+  past card is simply not tappable (no edit block ever opens). The `Actual:` display line is
+  unaffected.
+- `CaptureViewModel.editLoggedSet` — matching safety net: early-returns (no write) when
+  `plannedSetId in unilateralSetIds`, so `editLoggedSet` can never mutate a unilateral row even
+  if reached by some other path.
+- Both spots carry a `// side-aware unilateral edit = follow-on` comment: the real fix is keying
+  `loggedSetActuals` / `editingSetId` / `existingLog` by `(plannedSetId, sideIndex)` end-to-end
+  plus per-side cards. Deliberately **not** built now.
+- Pre-existing display note still holds: `loggedSetActuals` keeps only the latest write per
+  `plannedSetId`, so a unilateral card's `Actual:` line shows side 2's value. Acceptable for now
+  (display only; no data loss), folded into the same follow-on.
 
 ## F — weight carries forward
 
@@ -135,24 +156,29 @@ RED, then implemented):
   collapses to one row while the other side survives (2 rows total from 3 writes).
 - `editing_an_ht_set_load_preserves_its_felt_peak` — J review IMPORTANT fix: correcting load
   keeps the stored felt-peak (255.0) instead of nulling it.
+- `editLoggedSet_is_a_noop_for_a_unilateral_planned_set` — B re-review CRITICAL fix: after both
+  sides are logged, an edit attempt on the unilateral card writes nothing — 2 rows unchanged,
+  both original loads {50,48} intact, no correction written (VM safety net).
 - `FakeGatedDao` updated to implement the new `deleteSetLogForPlannedSetSide` and
   `setLogForPlannedSet` abstract methods (required by the `CaptureDao` interface change);
   verified the existing `logWorkingSet_commits_before_advance_ordering` gated test still passes
   unchanged (the side-keyed delete is a synchronous no-op before the gated insert, so ordering
   semantics are unaffected).
 
-`app/src/test/java/com/jauschua/ironlogv2/ui/capture/CaptureScreenLogicTest.kt` (+11 tests, pure
+`app/src/test/java/com/jauschua/ironlogv2/ui/capture/CaptureScreenLogicTest.kt` (+14 tests, pure
 function tests, no Compose needed — matches this file's existing convention):
 - `loggedActualLine_*` (4 tests) — B, display line composition incl. omitting missing pieces.
 - `tapResultLabel_null_for_unknown_or_missing_tap` — B.
+- `isSetEditable_*` (3 tests) — B re-review CRITICAL fix: editable only for past+bilateral;
+  false for past+unilateral and for not-yet-logged.
 - `withCarriedLoad_*` (3 tests) and `effectiveLoadPrefill_*` (3 tests) — F, carry-forward map
   semantics and prefill precedence, including the exact Day-1 repro (170 prescribed, 175
   entered → 175 prefills, not 170).
 
 ## Build + test results
 
-- `./gradlew :app:testDebugUnitTest` — **BUILD SUCCESSFUL**, full suite **171 tests, 0
-  failures, 0 errors** (Capture-relevant: 15 in `CaptureViewModelTest`, 54 in
+- `./gradlew :app:testDebugUnitTest` — **BUILD SUCCESSFUL**, full suite **175 tests, 0
+  failures, 0 errors** (Capture-relevant: 16 in `CaptureViewModelTest`, 57 in
   `CaptureScreenLogicTest`, plus `CaptureViewModelReviewTest` 6, `CaptureReviewDaoTest` 3,
   `CaptureDurabilityTest` 1, `CaptureRepoReviewTest` 4, `CaptureRepoTest` 2 — all green).
 - `./gradlew :app:assembleDebug` — **BUILD SUCCESSFUL**.

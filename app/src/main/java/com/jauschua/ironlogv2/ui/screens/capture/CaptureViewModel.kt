@@ -379,6 +379,14 @@ class CaptureViewModel(
         isWarmup: Boolean = false,
         feltPeak: Double? = null,
     ) {
+        // Safety net for the UI gate (see isSetEditable in CaptureScreen): a unilateral set has
+        // TWO rows (sideIndex 0 and 1) under one plannedSetId, but this edit path is keyed by
+        // plannedSetId alone — existingLog returns side 1 (smallest draftId) and the write goes
+        // back with sideIndex 0, so editing the card (which displays side 2) would overwrite
+        // side 1's real data. Refuse rather than corrupt. Side-aware unilateral edit = follow-on:
+        // key loggedSetActuals / editingSetId / existingLog by (plannedSetId, sideIndex)
+        // end-to-end with per-side cards. Not built here.
+        if (plannedSetId in unilateralSetIds) return
         if (setRole in TAP_REQUIRED && tap == null) {
             _uiError.value = "Tap required before continuing"
             return
