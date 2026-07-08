@@ -46,9 +46,11 @@ private class FakeGatedDao(
     val stored: MutableList<SetLogDraft> = mutableListOf(),
 ) : CaptureDao {
     override suspend fun insertSetLog(d: SetLogDraft) { gate.await(); stored.add(d) }
-    override suspend fun deleteSetLogForPlannedSet(sessionId: Int, plannedSetId: Int) {
-        stored.removeAll { it.sessionId == sessionId && it.plannedSetId == plannedSetId }
+    override suspend fun deleteSetLogForPlannedSetSide(sessionId: Int, plannedSetId: Int, sideIndex: Int) {
+        stored.removeAll { it.sessionId == sessionId && it.plannedSetId == plannedSetId && it.sideIndex == sideIndex }
     }
+    override suspend fun setLogForPlannedSet(sessionId: Int, plannedSetId: Int): SetLogDraft? =
+        stored.filter { it.sessionId == sessionId && it.plannedSetId == plannedSetId }.minByOrNull { it.draftId }
     override suspend fun insertSurvey(d: SurveyDraft) {}
     override suspend fun insertNote(d: NoteDraft) {}
     override suspend fun setLogsForSession(sessionId: Int): List<SetLogDraft> =
@@ -462,5 +464,102 @@ class CaptureViewModelTest {
 
         val rows = db.captureDao().setLogsForSession(7)
         assertEquals("upsert keyed on (sessionId, plannedSetId) — one row survives", 1, rows.size)
+    }
+
+    // ── Fix J (unilateral): side discriminator — both sides survive, same-side dedups ────────
+
+    /**
+     * Regression guard for the review-flagged over-collapse: a UNILATERAL set logs two rows
+     * under the SAME plannedSetId (side 1 + side 2). The upsert is keyed on
+     * (sessionId, plannedSetId, sideIndex), so BOTH sides must survive locally — losing side 1's
+     * actual on the side-2 write is the exact bug being prevented. Both rows must then reach
+     * submit() (2 SetLogIn entries), preserving volume.
+     */
+    @Test
+    fun unilateral_set_keeps_both_sides_locally_and_both_reach_submit() = runBlocking {
+        var capturedBody: String? = null
+        val engine = MockEngine { req ->
+            capturedBody = (req.body as io.ktor.http.content.TextContent).text
+            respond("""{"session_id":7,"status":"COMPLETED","set_logs_written":2,"already_completed":false}""",
+                HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext<Context>(), CaptureDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val repo = CaptureRepo(ApiClient(engine = engine), db.captureDao())
+        val vm = CaptureViewModel(repo, sessionId = 7)
+
+        val eUni = exercise(id = 1, idBase = 1, rounds = 1, unilateral = true) // planned_sets = [id=1]
+        val group = GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1, exercises = listOf(eUni))
+        vm.initPrescriptionForTestFromGroups(listOf(group))
+
+        // Side 1 (left) then side 2 (right) — distinct actuals.
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 50.0, actualReps = 8, tap = "ON_TARGET")
+        vm.logWorkingSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 48.0, actualReps = 7, tap = "ON_TARGET")
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("both unilateral sides must survive locally", 2, rows.size)
+        assertEquals("side 1 and side 2 loads both present",
+            setOf(50.0, 48.0), rows.mapNotNull { it.actualLoad }.toSet())
+        assertEquals("sides distinguished by sideIndex 0/1", setOf(0, 1), rows.map { it.sideIndex }.toSet())
+
+        repo.submit(7)
+        // Two set-log entries in the payload — one per side (volume preserved).
+        val occurrences = Regex("\"planned_set_id\":1\\b").findAll(capturedBody!!).count()
+        assertEquals("both sides reach submit()", 2, occurrences)
+    }
+
+    /**
+     * A double-tap of the SAME side (same plannedSetId + same sideIndex) still collapses to one
+     * row — the dedup we want, at the persistence layer where "side" is unambiguous. (At the VM
+     * level a unilateral set is a deliberate two-tap side-1-then-side-2, so this same-side
+     * guarantee is enforced by the (sessionId, plannedSetId, sideIndex) key, exercised here.)
+     */
+    @Test
+    fun double_submit_of_same_unilateral_side_stays_one_row() = runBlocking {
+        val (repo, db) = deps()
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 1, movementId = 1, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 50.0, actualReps = 8,
+            feedbackTap = "ON_TARGET", sideIndex = 0))
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 1, movementId = 1, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 50.0, actualReps = 8,
+            feedbackTap = "ON_TARGET", sideIndex = 0))
+        // A DIFFERENT side is a distinct row.
+        repo.logSet(SetLogDraft(sessionId = 7, plannedSetId = 1, movementId = 1, setIndex = 0,
+            setRole = "WORKING", isWarmup = false, actualLoad = 48.0, actualReps = 7,
+            feedbackTap = "ON_TARGET", sideIndex = 1))
+
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("same-side double-submit collapses; the other side survives", 2, rows.size)
+    }
+
+    // ── Fix J (edit): a correction must not wipe unsurfaced actuals (felt-peak) ──────────────
+
+    /**
+     * Because the upsert is a full-row replace and the edit UI only surfaces load/reps/tap,
+     * [CaptureViewModel.editLoggedSet] must carry the original row's felt-peak (an HT/band-
+     * composite set's real signal) into the corrected row — editing load must not null it.
+     */
+    @Test
+    fun editing_an_ht_set_load_preserves_its_felt_peak() = runBlocking {
+        val (repo, db) = deps()
+        val vm = CaptureViewModel(repo, sessionId = 7)
+        val ps0 = PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false)
+        vm.initPrescriptionForTest(listOf(ps0))
+
+        // Log an HT set WITH a felt-peak.
+        vm.logWorkingSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 6, tap = "ON_TARGET", feltPeak = 255.0)
+        assertEquals(255.0, db.captureDao().setLogsForSession(7).single().feltPeak)
+
+        // Correct just the load (edit UI never surfaces felt-peak → passes null).
+        vm.editLoggedSet(plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 170.0, actualReps = 6, tap = "ON_TARGET")
+
+        val row = db.captureDao().setLogsForSession(7).single()
+        assertEquals("load corrected", 170.0, row.actualLoad)
+        assertEquals("felt-peak preserved across the edit — not nulled", 255.0, row.feltPeak)
     }
 }

@@ -56,32 +56,65 @@ instead of reverting to 170 when the cursor reaches them.
 
 ## J — idempotent set logging (no double-submit)
 
+**Idempotency key: `(sessionId, plannedSetId, sideIndex)`.** The `sideIndex` component is the
+review fix — see "How unilateral sides are distinguished" below.
+
+- `data/local/CaptureEntities.kt` — added `val sideIndex: Int = 0` to `SetLogDraft` (side
+  discriminator; default 0 keeps every existing bilateral caller/row unchanged).
+- `data/local/CaptureDatabase.kt` — bumped `@Database(version = 2)` and added
+  `CAPTURE_MIGRATION_1_2` (`ALTER TABLE setlog_draft ADD COLUMN sideIndex INTEGER NOT NULL
+  DEFAULT 0`). Non-destructive on purpose: `capture.db` is the offline outbox, so a destructive
+  fallback could drop a session logged just before an app update.
+- `di/AppContainer.kt` — `.addMigrations(CAPTURE_MIGRATION_1_2)` on the builder.
 - `data/local/CaptureDao.kt`:
-  - New `@Query DELETE ... WHERE sessionId = :sessionId AND plannedSetId = :plannedSetId` —
-    `deleteSetLogForPlannedSet`.
-  - New `@Transaction suspend fun upsertSetLog(d: SetLogDraft)` (Kotlin default interface
-    method): deletes any prior row for `(sessionId, plannedSetId)` when `plannedSetId != null`,
-    then inserts. Wrapped in `@Transaction` for atomicity. Rows with a null `plannedSetId` are
-    left as plain inserts (nothing to key an upsert on).
-  - **Idempotency key: `(sessionId, plannedSetId)`.** No new column, index, or schema/version
-    bump — the delete-then-insert pair does the dedup work directly, avoiding any Room migration
-    risk on the existing `version = 1` database.
-- `data/repo/CaptureRepo.kt` — `logSet` now calls `dao.upsertSetLog(d)` instead of
-  `dao.insertSetLog(d)`. This is the actual fix: every write path (`logWorkingSet`,
-  `editLoggedSet`, and any future caller of `CaptureRepo.logSet`) now goes through the upsert, so
-  a duplicate submission of the same planned set (double-tap, retry after a transient error, or
-  an explicit correction) always replaces the prior row instead of appending a second one.
-- Verified the cursor-advance math in `logWorkingSet` is unaffected by a duplicate call: the
-  cursor's next-id lookup (`flattenedPrescription.indexOfFirst { it.id == plannedSetId }`) is
-  idempotent by construction (same input → same output), so calling `logWorkingSet` twice with
-  the same `plannedSetId` converges to the same cursor position rather than double-advancing —
-  no additional cursor guard was needed beyond the DAO-level upsert.
-- **Concern for the user:** this fixes 100% of duplicate rows created via *this* client going
-  forward. It does **not** retroactively deduplicate the 7 rows already created during the Day-1
-  incident (those already reached the server via `submit()`, if that session was submitted) — a
-  server-side dedup pass on `set_logs` (e.g. unique constraint or a one-time cleanup on
-  `(session_id, planned_set_id)`) may still be worth doing if that batch was already ingested.
-  Not implemented here — out of scope for a client-only batch, and no server code was touched.
+  - `deleteSetLogForPlannedSetSide(sessionId, plannedSetId, sideIndex)` (replaces the earlier
+    side-agnostic delete).
+  - New `setLogForPlannedSet(sessionId, plannedSetId): SetLogDraft?` — reads back the stored row
+    so an edit can preserve unsurfaced fields (see the felt-peak fix below).
+  - `@Transaction suspend fun upsertSetLog(d: SetLogDraft)` now deletes on
+    `(sessionId, plannedSetId, sideIndex)` then inserts. Null-`plannedSetId` rows stay plain
+    inserts.
+- `data/repo/CaptureRepo.kt` — `logSet` calls `dao.upsertSetLog(d)`; new
+  `existingLog(sessionId, plannedSetId)` for the edit path.
+- `ui/screens/capture/CaptureViewModel.kt`:
+  - `logWorkingSet` computes `sideIndex = if (plannedSetId in unilateralSetIds) unilateralSideCount
+    else 0` and writes it. `unilateralSideCount` is 0 while side 1 is being written and 1 while
+    side 2 is (it's incremented AFTER the write), so it's exactly the side being committed.
+  - `editLoggedSet` reads `repo.existingLog(...)` and carries the original row's `feltPeak`
+    (`feltPeak ?: existing?.feltPeak`), `rpeNumeric`, `actualUnassistedReps`,
+    `actualAssistedReps`, `actualPlates`, `bandPairId`, and `sideIndex` into the corrected row.
+
+### How unilateral sides are distinguished (review CRITICAL fix)
+
+There was **no** existing per-side discriminator — a unilateral exercise logs two rows with the
+same `plannedSetId`, `setIndex`, `setRole`, differing only in the actuals. The original J upsert
+keyed only on `(sessionId, plannedSetId)`, so the side-2 write deleted side 1 → side 1's
+load/reps/tap was silently lost, locally and from `submit()`. Fix: added the `sideIndex` column
+and made it part of the upsert key. The value comes straight from the VM's existing
+`unilateralSideCount` state (0 = side 1 / all bilateral sets, 1 = side 2) at write time — no new
+VM state, no change to the two-tap-per-unilateral logging flow. Result:
+- true double-submit of the same set **and side** → one row (the dedup we want);
+- unilateral side 1 (sideIndex 0) and side 2 (sideIndex 1) **both** survive locally and both reach
+  `submit()` (2 `SetLogIn` entries → volume preserved).
+
+`submit()` needs no change — it already maps each stored `SetLogDraft` row to one `SetLogIn`, so
+restoring both rows restores the two-entry payload; no `sideIndex` is sent to the server (not
+part of `SetLogIn`; server API untouched, still backward-compatible).
+
+### Felt-peak preservation on edit (review IMPORTANT fix)
+
+Because the upsert is a full-row replace and the edit UI only surfaces load/reps/tap,
+`editLoggedSet` used to default `feltPeak = null`, wiping an HT/band-composite set's felt-peak on
+any correction. Fixed by reading the original row via `repo.existingLog(...)` and carrying its
+felt-peak (plus the other aux actual fields and its `sideIndex`) into the re-saved draft, so a
+load/reps correction never nulls felt-peak.
+
+- **Concern for the user (unchanged):** this fixes 100% of duplicate rows created via *this*
+  client going forward. It does **not** retroactively deduplicate rows already created during the
+  Day-1 incident and already sent to the server via `submit()` — a server-side dedup/one-time
+  cleanup on `(session_id, planned_set_id)` (respecting per-side rows for unilateral movements)
+  may still be worth doing if that batch was already ingested. Out of scope for a client-only
+  batch; no server code was touched.
 
 ## Tests added (TDD, failing-first where practical)
 
@@ -95,10 +128,18 @@ RED, then implemented):
 - `editLoggedSet_without_tap_is_rejected_for_working_role` — B, gate parity with `logWorkingSet`.
 - `logging_same_planned_set_twice_yields_one_row_not_a_duplicate` — J, VM-level double-submit.
 - `repo_logSet_upserts_by_session_and_planned_set_id` — J, repo/DAO-level upsert, direct.
-- `FakeGatedDao` updated to implement the new `deleteSetLogForPlannedSet` abstract method
-  (required by the `CaptureDao` interface change); verified the existing
-  `logWorkingSet_commits_before_advance_ordering` gated test still passes unchanged (the delete
-  is a synchronous no-op before the gated insert, so ordering semantics are unaffected).
+- `unilateral_set_keeps_both_sides_locally_and_both_reach_submit` — J review CRITICAL fix: a
+  unilateral set logs 2 rows (both loads present, `sideIndex` {0,1}) AND both reach `submit()`
+  (2 `planned_set_id` entries in the captured payload).
+- `double_submit_of_same_unilateral_side_stays_one_row` — J review CRITICAL fix: same set+side
+  collapses to one row while the other side survives (2 rows total from 3 writes).
+- `editing_an_ht_set_load_preserves_its_felt_peak` — J review IMPORTANT fix: correcting load
+  keeps the stored felt-peak (255.0) instead of nulling it.
+- `FakeGatedDao` updated to implement the new `deleteSetLogForPlannedSetSide` and
+  `setLogForPlannedSet` abstract methods (required by the `CaptureDao` interface change);
+  verified the existing `logWorkingSet_commits_before_advance_ordering` gated test still passes
+  unchanged (the side-keyed delete is a synchronous no-op before the gated insert, so ordering
+  semantics are unaffected).
 
 `app/src/test/java/com/jauschua/ironlogv2/ui/capture/CaptureScreenLogicTest.kt` (+11 tests, pure
 function tests, no Compose needed — matches this file's existing convention):
@@ -110,10 +151,10 @@ function tests, no Compose needed — matches this file's existing convention):
 
 ## Build + test results
 
-- `./gradlew :app:testDebugUnitTest` — **BUILD SUCCESSFUL**, all suites green (12 tests in
-  `CaptureViewModelTest`, 54 in `CaptureScreenLogicTest`, all other Capture-related suites
-  unchanged and passing: `CaptureViewModelReviewTest` 6, `CaptureReviewDaoTest` 3,
-  `CaptureDurabilityTest` 1, `CaptureRepoReviewTest` 4, `CaptureRepoTest` 2).
+- `./gradlew :app:testDebugUnitTest` — **BUILD SUCCESSFUL**, full suite **171 tests, 0
+  failures, 0 errors** (Capture-relevant: 15 in `CaptureViewModelTest`, 54 in
+  `CaptureScreenLogicTest`, plus `CaptureViewModelReviewTest` 6, `CaptureReviewDaoTest` 3,
+  `CaptureDurabilityTest` 1, `CaptureRepoReviewTest` 4, `CaptureRepoTest` 2 — all green).
 - `./gradlew :app:assembleDebug` — **BUILD SUCCESSFUL**.
 
 ## Notes on scope discipline
@@ -121,6 +162,8 @@ function tests, no Compose needed — matches this file's existing convention):
 - `app/build.gradle.kts` had a pre-existing uncommitted local change (server base URL,
   `myflix.media:8000` → `192.168.1.7:8000`) unrelated to this batch, present before I started.
   Left untouched and **not staged/committed** per the task constraint.
-- No new Gradle dependency added.
-- No schema/DB version change — J's fix is DAO-query-level only (delete-then-insert in a
-  `@Transaction`), so there's no migration risk to the existing `capture.db` (version 1).
+- No new Gradle dependency added; `app/build.gradle.kts` not modified by this batch.
+- Schema change (review fix): `capture.db` bumped v1 → v2 to add `SetLogDraft.sideIndex`, with a
+  non-destructive `ALTER TABLE ADD COLUMN` migration (`CAPTURE_MIGRATION_1_2`) so in-flight
+  drafts survive an app update. This is app code (entity + migration + DI wiring), not a
+  build-script change.

@@ -11,14 +11,26 @@ interface CaptureDao {
     @Insert suspend fun insertSurvey(d: SurveyDraft)
     @Insert suspend fun insertNote(d: NoteDraft)
 
-    @Query("DELETE FROM setlog_draft WHERE sessionId = :sessionId AND plannedSetId = :plannedSetId")
-    suspend fun deleteSetLogForPlannedSet(sessionId: Int, plannedSetId: Int)
+    @Query("DELETE FROM setlog_draft WHERE sessionId = :sessionId AND plannedSetId = :plannedSetId AND sideIndex = :sideIndex")
+    suspend fun deleteSetLogForPlannedSetSide(sessionId: Int, plannedSetId: Int, sideIndex: Int)
 
     /**
-     * Idempotent write, keyed on (sessionId, plannedSetId): re-logging the same planned set
+     * Any existing draft row for (sessionId, plannedSetId), earliest first. Used by
+     * [com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel.editLoggedSet] to carry an
+     * unsurfaced actual (e.g. felt-peak on an HT/band-composite set) forward into a corrected
+     * row, so editing load/reps never nulls a field the edit UI doesn't show.
+     */
+    @Query("SELECT * FROM setlog_draft WHERE sessionId = :sessionId AND plannedSetId = :plannedSetId ORDER BY draftId LIMIT 1")
+    suspend fun setLogForPlannedSet(sessionId: Int, plannedSetId: Int): SetLogDraft?
+
+    /**
+     * Idempotent write, keyed on (sessionId, plannedSetId, sideIndex): re-logging the same set+side
      * (double-tap, retry, or an explicit correction) replaces its prior row in place rather than
-     * appending a duplicate. Rows with a null [SetLogDraft.plannedSetId] have nothing to key on,
-     * so they always insert as a new row (unchanged behavior). Wrapped in `@Transaction` so the
+     * appending a duplicate. The [SetLogDraft.sideIndex] is part of the key precisely so a
+     * UNILATERAL exercise's two legitimate rows under one [SetLogDraft.plannedSetId] (side 1 =
+     * sideIndex 0, side 2 = sideIndex 1) both survive — only a duplicate of the SAME side
+     * collapses. Rows with a null [SetLogDraft.plannedSetId] have nothing to key on, so they
+     * always insert as a new row (unchanged behavior). Wrapped in `@Transaction` so the
      * delete+insert pair commits atomically — a crash between the two can't leave the set
      * un-logged.
      *
@@ -29,7 +41,7 @@ interface CaptureDao {
     @Transaction
     suspend fun upsertSetLog(d: SetLogDraft) {
         if (d.plannedSetId != null) {
-            deleteSetLogForPlannedSet(d.sessionId, d.plannedSetId)
+            deleteSetLogForPlannedSetSide(d.sessionId, d.plannedSetId, d.sideIndex)
         }
         insertSetLog(d)
     }

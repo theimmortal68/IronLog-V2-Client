@@ -42,6 +42,14 @@ class CaptureRepo(private val apiClient: ApiClient, private val dao: CaptureDao)
             .filter { it.plannedSetId != null }
             .associateBy { it.plannedSetId!! }
 
+    /**
+     * The stored draft for (sessionId, plannedSetId), if any — used by
+     * [com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel.editLoggedSet] to preserve
+     * unsurfaced actual fields (e.g. felt-peak) across an in-place correction.
+     */
+    suspend fun existingLog(sessionId: Int, plannedSetId: Int): SetLogDraft? =
+        dao.setLogForPlannedSet(sessionId, plannedSetId)
+
     /** Batch submit. Idempotent + retryable: on success, clear local drafts. */
     suspend fun submit(sessionId: Int): Result<SubmitResponse> = runCatchingApi {
         val setLogs = dao.setLogsForSession(sessionId).map {

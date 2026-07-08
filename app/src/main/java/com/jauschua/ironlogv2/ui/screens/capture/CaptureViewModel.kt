@@ -283,7 +283,12 @@ class CaptureViewModel(
             return
         }
         _uiError.value = null
-        // AWAIT the Room @Insert — suspends until the SQLite transaction commits.
+        // Side discriminator for the idempotency key (see SetLogDraft.sideIndex): a unilateral
+        // exercise logs side 1 (unilateralSideCount == 0 at this point) then side 2
+        // (unilateralSideCount == 1); the side-count is incremented AFTER the write below, so it
+        // still reflects the side being written here. Bilateral sets are always side 0.
+        val sideIndex = if (plannedSetId != null && plannedSetId in unilateralSetIds) unilateralSideCount else 0
+        // AWAIT the Room upsert — suspends until the SQLite transaction commits.
         repo.logSet(
             SetLogDraft(
                 sessionId = sessionId,
@@ -296,6 +301,7 @@ class CaptureViewModel(
                 actualReps = actualReps,
                 feedbackTap = tap,
                 feltPeak = feltPeak,
+                sideIndex = sideIndex,
             ),
         )
         // Surface the actual just committed (see LoggedSetActual) — a logged set's card shows
@@ -352,6 +358,13 @@ class CaptureViewModel(
      * [plannedSetId] rather than appending a second one, so this is safe to call repeatedly (e.g.
      * re-opening and re-saving without changing anything).
      *
+     * Field preservation: the upsert is a full-row REPLACE, but the edit UI only surfaces
+     * load/reps/tap. Any other actual on the original row that the UI doesn't show (felt-peak on
+     * an HT/band-composite set, and the aux plates/band/assisted-rep fields) is read back from
+     * the stored draft and carried into the corrected row, so correcting load/reps never nulls
+     * felt-peak. The original row's [SetLogDraft.sideIndex] is preserved too, so an edit replaces
+     * exactly that row rather than colliding with the other side of a unilateral set.
+     *
      * Same mandatory-tap gate as [logWorkingSet]: a working role with a null tap is rejected and
      * neither the write nor [loggedSetActuals] are updated.
      */
@@ -371,6 +384,9 @@ class CaptureViewModel(
             return
         }
         _uiError.value = null
+        // Read the original row so unsurfaced actuals (felt-peak + aux fields) survive the
+        // full-row replace; fall back to plain defaults if it somehow isn't there.
+        val existing = repo.existingLog(sessionId, plannedSetId)
         repo.logSet(
             SetLogDraft(
                 sessionId = sessionId,
@@ -382,7 +398,13 @@ class CaptureViewModel(
                 actualLoad = actualLoad,
                 actualReps = actualReps,
                 feedbackTap = tap,
-                feltPeak = feltPeak,
+                feltPeak = feltPeak ?: existing?.feltPeak,
+                rpeNumeric = existing?.rpeNumeric,
+                actualUnassistedReps = existing?.actualUnassistedReps,
+                actualAssistedReps = existing?.actualAssistedReps,
+                actualPlates = existing?.actualPlates,
+                bandPairId = existing?.bandPairId,
+                sideIndex = existing?.sideIndex ?: 0,
             ),
         )
         _loggedSetActuals.value = _loggedSetActuals.value +
