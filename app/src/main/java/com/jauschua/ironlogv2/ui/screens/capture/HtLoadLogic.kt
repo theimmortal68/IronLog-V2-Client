@@ -9,16 +9,18 @@ package com.jauschua.ironlogv2.ui.screens.capture
 // existing call sites and CaptureScreenLogicTest's imports unchanged); TodayScreen imports
 // [htSetupLine] explicitly since it lives in a different package.
 
-/** Band id (index) -> display name. Index 0-5 only; five colors past index 5 have no name. */
+/** Display names in server band-ordinal order (#0 Orange, #1 Red, …). Server BandPair.id is
+ *  1-based (Orange=1), so map an id to a name via `id - 1`. */
 private val BAND_NAMES = listOf("Orange", "Red", "Blue", "Green", "Black", "Purple")
 
 /**
- * Maps band ids in [config] to their display names, in order, via [BAND_NAMES]. Out-of-range
- * ids are dropped defensively (via [getOrNull]) rather than crashing. Null or empty [config]
- * yields an empty list.
+ * Maps band ids in [config] to their display names, in order, via [BAND_NAMES]. [config] holds
+ * server BandPair ids (1-based: Orange=1, Red=2, …), so index [BAND_NAMES] at `id - 1`.
+ * Out-of-range/non-positive ids are dropped defensively rather than crashing. Null or empty
+ * [config] yields an empty list.
  */
 internal fun bandNames(config: List<Int>?): List<String> =
-    config?.mapNotNull { BAND_NAMES.getOrNull(it) } ?: emptyList()
+    config?.mapNotNull { BAND_NAMES.getOrNull(it - 1) } ?: emptyList()
 
 /**
  * Composes the "plates + band names" portion of an HT setup string, e.g. `"166 plates + Orange,

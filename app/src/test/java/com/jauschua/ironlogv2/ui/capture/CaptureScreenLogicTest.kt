@@ -360,12 +360,13 @@ class CaptureScreenLogicTest {
 
     @Test
     fun bandNames_maps_ids_to_names_in_order() {
-        assertEquals(listOf("Orange", "Red"), bandNames(listOf(0, 1)))
+        // server BandPair ids are 1-based: Orange=1, Red=2 (regression: id 1 must be Orange, not Red)
+        assertEquals(listOf("Orange", "Red"), bandNames(listOf(1, 2)))
     }
 
     @Test
     fun bandNames_skips_out_of_range_ids_defensively() {
-        assertEquals(listOf("Orange"), bandNames(listOf(0, 99)))
+        assertEquals(listOf("Orange"), bandNames(listOf(1, 0, 99)))  // 1=Orange; 0 and 99 out of range -> dropped
     }
 
     @Test
@@ -380,7 +381,7 @@ class CaptureScreenLogicTest {
     fun htSetupLine_composes_plates_bands_and_peak() {
         assertEquals(
             "166 plates + Orange, Red · peak ~250",
-            htSetupLine(plates = 166.0, config = listOf(0, 1), targetFeltPeak = 250.0),
+            htSetupLine(plates = 166.0, config = listOf(1, 2), targetFeltPeak = 250.0),
         )
     }
 
@@ -391,7 +392,7 @@ class CaptureScreenLogicTest {
 
     @Test
     fun htSetupLine_bands_only() {
-        assertEquals("Orange, Red", htSetupLine(plates = null, config = listOf(0, 1), targetFeltPeak = null))
+        assertEquals("Orange, Red", htSetupLine(plates = null, config = listOf(1, 2), targetFeltPeak = null))
     }
 
     @Test
