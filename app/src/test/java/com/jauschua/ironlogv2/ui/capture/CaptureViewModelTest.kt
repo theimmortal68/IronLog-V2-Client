@@ -13,23 +13,39 @@ import com.jauschua.ironlogv2.data.local.CaptureDatabase
 import com.jauschua.ironlogv2.data.local.NoteDraft
 import com.jauschua.ironlogv2.data.local.SetLogDraft
 import com.jauschua.ironlogv2.data.local.SurveyDraft
+import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
+import com.jauschua.ironlogv2.ui.UiState
 import com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
+import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -70,8 +86,28 @@ private class FakeGatedDao(
     override suspend fun sessionNote(sessionId: Int): NoteDraft? = null
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class CaptureViewModelTest {
+
+    // [load] uses viewModelScope.launch (unlike logWorkingSet/editLoggedSet, which are plain
+    // suspend fns the caller drives directly) — Main must be a TestDispatcher for it to run.
+    // UnconfinedTestDispatcher runs it eagerly to its first real suspension (the MockEngine
+    // call), same pattern as WizardViewModelTest. Harmless for the other tests in this class,
+    // none of which touch viewModelScope.
+    @Before
+    fun setUpMain() {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+    }
+
+    @After
+    fun tearDownMain() {
+        Dispatchers.resetMain()
+    }
+
+    /** Suspend until [flow] emits a value matching [predicate], failing fast on a 5s timeout. */
+    private suspend fun <T> StateFlow<T>.await(predicate: (T) -> Boolean): T =
+        withTimeout(5_000) { first(predicate) }
 
     // ── Room-backed helpers (existing tests) ─────────────────────────────────────────────
 
@@ -597,5 +633,183 @@ class CaptureViewModelTest {
         assertEquals("both original side loads intact — no corruption",
             setOf(50.0, 48.0), rows.mapNotNull { it.actualLoad }.toSet())
         assertNull("no 999 correction written", rows.firstOrNull { it.actualLoad == 999.0 })
+    }
+
+    // ── Resume-cursor fix: background-kill no longer looks like lost progress ───────────────
+
+    /**
+     * [CaptureRepo]/Room backed by a MockEngine that branches on request path — GET
+     * /sessions/today returns [session] (so [CaptureViewModel.load] can be driven end-to-end),
+     * anything else (submit) returns a generic OK body. Mirrors WizardViewModelTest's
+     * path-branching MockEngine.
+     */
+    private fun repoForLoad(session: SessionDetailResponse): Pair<CaptureRepo, CaptureDatabase> {
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext<Context>(),
+            CaptureDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val sessionJson = Json.encodeToString(session)
+        val engine = MockEngine { req ->
+            val body = if (req.url.encodedPath.endsWith("/sessions/today")) {
+                sessionJson
+            } else {
+                """{"session_id":${session.id},"status":"COMPLETED","set_logs_written":1,"already_completed":false}"""
+            }
+            respond(
+                content = ByteReadChannel(body),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        return CaptureRepo(ApiClient(engine = engine), db.captureDao()) to db
+    }
+
+    /**
+     * The core data-loss-UX bug: an athlete logs 3 of 6 sets, the app is backgrounded and
+     * killed, Android recreates the ViewModel, [CaptureViewModel.load] runs. The drafts are
+     * durably persisted (write-before-advance already committed them) — this proves [load]
+     * resumes the cursor at the first UNLOGGED set (flattened index 3, id 20) instead of
+     * resetting to the first set (id 10), and that [pastSetIds] — which derives "logged" purely
+     * from cursor position — therefore renders the 3 already-logged sets as logged again instead
+     * of the whole session looking erased.
+     */
+    @Test
+    fun load_resumes_cursor_at_first_unlogged_set_not_first_set() = runBlocking {
+        // 2 exercises × 3 sets each, STRAIGHT (exercise-major): flattened order
+        // [10,11,12, 20,21,22]. All of exercise 1 (first 3 of 6) already logged.
+        val e1 = exercise(id = 1, idBase = 10, rounds = 3)
+        val e2 = exercise(id = 2, idBase = 20, rounds = 3)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(e1, e2),
+        )
+        val session = SessionDetailResponse(
+            id = 7, date = "2026-07-07", day_role = "PUSH", phase = "BASE",
+            status = "IN_PROGRESS", groups = listOf(group),
+        )
+        val (repo, db) = repoForLoad(session)
+
+        // Drafts from BEFORE the (simulated) process kill — the ONLY evidence the resumed
+        // cursor may reconstruct from.
+        listOf(10, 11, 12).forEach { psId ->
+            db.captureDao().insertSetLog(
+                SetLogDraft(
+                    sessionId = 7, plannedSetId = psId, movementId = 1, setIndex = 0,
+                    setRole = "WORKING", isWarmup = false, actualLoad = 100.0, actualReps = 8,
+                    feedbackTap = "ON_TARGET",
+                ),
+            )
+        }
+
+        // Fresh ViewModel — simulates Android recreating it after the process was killed.
+        val vm = CaptureViewModel(repo, sessionId = 0)
+        vm.load()
+        vm.state.await { it is UiState.Success }
+
+        assertEquals(
+            "cursor must resume at the first UNLOGGED set (id 20 = exercise-2 set-1), " +
+                "not reset to set 1 (id 10)",
+            20,
+            vm.currentPlannedSetId.value,
+        )
+
+        val flatSets = flattenPrescription(session.groups)
+        assertEquals(
+            "the 3 already-logged sets must render as logged/checkmarked again",
+            setOf(10, 11, 12),
+            pastSetIds(flatSets, vm.currentPlannedSetId.value),
+        )
+
+        val actuals = vm.loggedSetActuals.value
+        assertEquals(3, actuals.size)
+        assertEquals(100.0, actuals[10]?.actualLoad)
+        assertEquals(100.0, actuals[11]?.actualLoad)
+        assertEquals(100.0, actuals[12]?.actualLoad)
+    }
+
+    /**
+     * A unilateral set with only side 1 (sideIndex 0) logged before the process died is
+     * MID-set, not done: the resumed cursor must land ON that same planned set (not skip past
+     * it), and the restored [CaptureViewModel] must treat the very next [logWorkingSet] call as
+     * side 2 (advancing the cursor) rather than side 1 again (which would hold the cursor and
+     * silently drop the true side-2 data by writing it as a duplicate side-1 row).
+     */
+    @Test
+    fun load_resumes_mid_unilateral_set_when_only_side_one_logged() = runBlocking {
+        val eUni = exercise(id = 1, idBase = 1, rounds = 1, unilateral = true) // planned_sets = [id=1]
+        val eNext = exercise(id = 2, idBase = 2, rounds = 1) // planned_sets = [id=2]
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(eUni, eNext),
+        )
+        val session = SessionDetailResponse(
+            id = 7, date = "2026-07-07", day_role = "PUSH", phase = "BASE",
+            status = "IN_PROGRESS", groups = listOf(group),
+        )
+        val (repo, db) = repoForLoad(session)
+
+        // Only side 1 (sideIndex 0) was logged before the process died.
+        db.captureDao().insertSetLog(
+            SetLogDraft(
+                sessionId = 7, plannedSetId = 1, movementId = 1, setIndex = 0,
+                setRole = "WORKING", isWarmup = false, actualLoad = 50.0, actualReps = 8,
+                feedbackTap = "ON_TARGET", sideIndex = 0,
+            ),
+        )
+
+        val vm = CaptureViewModel(repo, sessionId = 0)
+        vm.load()
+        vm.state.await { it is UiState.Success }
+
+        assertEquals(
+            "cursor lands ON the mid-logged unilateral set (side 2 still pending) — not past it",
+            1,
+            vm.currentPlannedSetId.value,
+        )
+
+        // Observable proof that unilateralSideCount was restored to 1 (not reset to 0): the
+        // NEXT call must be treated as side 2 — committing sideIndex 1 and advancing past the
+        // unilateral set — rather than side 1 again (which would hold the cursor at id 1).
+        vm.logWorkingSet(
+            plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 48.0, actualReps = 7, tap = "ON_TARGET",
+        )
+        assertEquals(
+            "second side committed, cursor advances past the unilateral set",
+            2,
+            vm.currentPlannedSetId.value,
+        )
+        val rows = db.captureDao().setLogsForSession(7)
+        assertEquals("both sides now persisted, no duplicate side-1 row", 2, rows.size)
+        assertEquals(setOf(0, 1), rows.map { it.sideIndex }.toSet())
+        assertEquals(setOf(50.0, 48.0), rows.mapNotNull { it.actualLoad }.toSet())
+    }
+
+    /** When every planned set is already fully logged, the resumed cursor is null (session
+     * complete / ready to submit) — same end-state as finishing the session live. */
+    @Test
+    fun load_leaves_cursor_null_when_all_sets_are_already_fully_logged() = runBlocking {
+        val e1 = exercise(id = 1, idBase = 10, rounds = 2)
+        val group = GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1, exercises = listOf(e1))
+        val session = SessionDetailResponse(
+            id = 7, date = "2026-07-07", day_role = "PUSH", phase = "BASE",
+            status = "IN_PROGRESS", groups = listOf(group),
+        )
+        val (repo, db) = repoForLoad(session)
+        listOf(10, 11).forEach { psId ->
+            db.captureDao().insertSetLog(
+                SetLogDraft(
+                    sessionId = 7, plannedSetId = psId, movementId = 1, setIndex = 0,
+                    setRole = "WORKING", isWarmup = false, actualLoad = 100.0, actualReps = 8,
+                    feedbackTap = "ON_TARGET",
+                ),
+            )
+        }
+
+        val vm = CaptureViewModel(repo, sessionId = 0)
+        vm.load()
+        vm.state.await { it is UiState.Success }
+
+        assertNull("all sets logged → cursor null, same as today's end-state", vm.currentPlannedSetId.value)
     }
 }
