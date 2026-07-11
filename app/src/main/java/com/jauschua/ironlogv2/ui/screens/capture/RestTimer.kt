@@ -21,13 +21,12 @@ import kotlin.math.roundToInt
 /**
  * Rest duration in seconds after logging a set.
  *
- * T1 (and T1b) tiers are RPE-adaptive: [baseRest] scales by how the set felt — shorter after
- * TOO_EASY, longer after TOO_HARD. Every other tier (T2/T3/T4, giant-set rounds) is fixed —
- * [tap] is ignored. [isGiantSet] is accepted for symmetry with the trigger call site
- * ([shouldStartRest]) but never itself changes the result: giant-set rounds are never T1.
+ * T1 (and T1b) and giant-set rounds are RPE-adaptive: [baseRest] scales by how the set felt — shorter after
+ * TOO_EASY, longer after TOO_HARD. Every other tier (T2/T3/T4 non-giant-set) is fixed —
+ * [tap] is ignored.
  */
 internal fun restSeconds(baseRest: Int, tierLabel: String, tap: FeedbackTap, isGiantSet: Boolean): Int {
-    val isAdaptiveTier = tierLabel == "T1" || tierLabel == "T1b"
+    val isAdaptiveTier = tierLabel == "T1" || tierLabel == "T1b" || isGiantSet
     if (!isAdaptiveTier) return baseRest
     val multiplier = when (tap) {
         FeedbackTap.TOO_EASY -> 0.75
@@ -35,6 +34,37 @@ internal fun restSeconds(baseRest: Int, tierLabel: String, tap: FeedbackTap, isG
         FeedbackTap.TOO_HARD -> 1.5
     }
     return (baseRest * multiplier).roundToInt()
+}
+
+/**
+ * Reduces the taps for all sets in a round down to the hardest (worst) one across the round:
+ * [FeedbackTap.TOO_HARD] > [FeedbackTap.ON_TARGET] > [FeedbackTap.TOO_EASY].
+ *
+ * If a set in [roundPlannedSetIds] has no logged actual yet or a missing tap, it is treated as
+ * [FeedbackTap.ON_TARGET] for aggregation (same default behavior as [CaptureViewModel.logWorkingSet]).
+ */
+internal fun hardestTapForRound(
+    loggedActuals: Map<Int, LoggedSetActual>,
+    roundPlannedSetIds: Iterable<Int>,
+): FeedbackTap {
+    var worst = FeedbackTap.TOO_EASY
+    var foundAny = false
+    for (id in roundPlannedSetIds) {
+        val tapStr = loggedActuals[id]?.tap
+        val tapEnum = if (tapStr != null) {
+            runCatching { FeedbackTap.valueOf(tapStr) }.getOrNull() ?: FeedbackTap.ON_TARGET
+        } else {
+            FeedbackTap.ON_TARGET
+        }
+        foundAny = true
+        if (tapEnum == FeedbackTap.TOO_HARD) {
+            return FeedbackTap.TOO_HARD
+        }
+        if (tapEnum == FeedbackTap.ON_TARGET) {
+            worst = FeedbackTap.ON_TARGET
+        }
+    }
+    return if (foundAny) worst else FeedbackTap.ON_TARGET
 }
 
 /**
@@ -84,6 +114,31 @@ internal fun restContextByPlannedSetId(groups: List<GroupOut>): Map<Int, SetRest
 }
 
 /**
+ * Maps every [com.jauschua.ironlogv2.data.api.dto.PlannedSetOut.id] in [groups] to the list of
+ * planned set IDs belonging to its same round (same group, same round index / set_index).
+ */
+internal fun roundPlannedSetIdsBySetId(groups: List<GroupOut>): Map<Int, List<Int>> {
+    val result = mutableMapOf<Int, List<Int>>()
+    for (g in groups) {
+        if (g.group_type == "GIANT_SET") {
+            for (r in 0 until g.rounds) {
+                val roundIds = g.exercises.mapNotNull { e -> e.planned_sets.getOrNull(r)?.id }
+                for (id in roundIds) {
+                    result[id] = roundIds
+                }
+            }
+        } else {
+            for (e in g.exercises) {
+                for (ps in e.planned_sets) {
+                    result[ps.id] = listOf(ps.id)
+                }
+            }
+        }
+    }
+    return result
+}
+
+/**
  * Whether logging a set for [exercise] within [group] should auto-start the rest countdown.
  *
  * STRAIGHT groups rest after every set (each exercise rests independently). GIANT_SET groups
@@ -97,7 +152,7 @@ internal fun shouldStartRest(group: GroupOut, exercise: ExerciseOut): Boolean =
 /**
  * `"m:ss"` display for the countdown label, e.g. `90` -> `"1:30"`, `5` -> `"0:05"`.
  */
-internal fun formatRestTime(remainingSeconds: Int): String {
+fun formatRestTime(remainingSeconds: Int): String {
     val minutes = remainingSeconds / 60
     val seconds = remainingSeconds % 60
     return "%d:%02d".format(minutes, seconds)
