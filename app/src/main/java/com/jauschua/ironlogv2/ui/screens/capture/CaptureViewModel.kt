@@ -8,16 +8,16 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.data.api.IronLogException
 import com.jauschua.ironlogv2.data.api.humanMessage
-import com.jauschua.ironlogv2.data.api.dto.FeedbackTap
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.local.SetLogDraft
 import com.jauschua.ironlogv2.data.local.SurveyDraft
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
+import com.jauschua.ironlogv2.service.AndroidRestTimerController
+import com.jauschua.ironlogv2.service.InMemoryRestTimerController
+import com.jauschua.ironlogv2.service.RestTimerController
 import com.jauschua.ironlogv2.ui.UiState
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -100,6 +100,7 @@ class CaptureViewModel(
     private val repo: CaptureRepo,
     /** Mutable so [load] can set it from today's session; tests inject a known id directly. */
     private var sessionId: Int,
+    private val restTimerController: RestTimerController = InMemoryRestTimerController(),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<SessionDetailResponse?>>(UiState.Loading)
@@ -158,6 +159,12 @@ class CaptureViewModel(
      */
     private var restContextBySetId: Map<Int, SetRestContext> = emptyMap()
 
+    /**
+     * Planned-set ids belonging to the same rest-governing round, keyed by planned-set id. For
+     * giant sets this contains every exercise in the round; for straight work it is just self.
+     */
+    private var roundSetIdsBySetId: Map<Int, List<Int>> = emptyMap()
+
     private var lastSetIdByGroup: Map<Int, GroupOut> = emptyMap()
 
     private val _pendingReview = MutableStateFlow<GroupReview?>(null)
@@ -173,16 +180,11 @@ class CaptureViewModel(
     private val _loggedSetActuals = MutableStateFlow<Map<Int, LoggedSetActual>>(emptyMap())
     val loggedSetActuals: StateFlow<Map<Int, LoggedSetActual>> = _loggedSetActuals.asStateFlow()
 
-    /** The running rest countdown ticker, if any. Cancelled/replaced by [startRest]/[skipRest]. */
-    private var restJob: Job? = null
-
     /**
-     * Seconds remaining on the current rest countdown; null when no countdown is running.
-     * Set by [startRest] (auto-triggered from [logWorkingSet]) and cleared by [skipRest] or
-     * when the countdown reaches zero. [addRestTime] extends a running countdown.
+     * Seconds remaining on the current rest countdown; null when no countdown is running. The
+     * service/controller is the single countdown owner; this ViewModel only exposes its state.
      */
-    private val _restRemainingSeconds = MutableStateFlow<Int?>(null)
-    val restRemainingSeconds: StateFlow<Int?> = _restRemainingSeconds.asStateFlow()
+    val restRemainingSeconds: StateFlow<Int?> = restTimerController.remainingSeconds
 
     /**
      * Load today's planned session.  Called from the screen's [LaunchedEffect] on entry.
@@ -208,6 +210,7 @@ class CaptureViewModel(
                         flattenedPrescription = flattenPrescription(session.groups)
                         unilateralSetIds = unilateralPlannedSetIds(session.groups)
                         restContextBySetId = restContextByPlannedSetId(session.groups)
+                        roundSetIdsBySetId = roundPlannedSetIdsBySetId(session.groups)
                         lastSetIdByGroup = lastSetIdByGroup(session.groups)
 
                         // Raw draft rows (not the collapsed loggedActualsFor map) so a
@@ -268,6 +271,7 @@ class CaptureViewModel(
         unilateralSetIds = unilateralPlannedSetIds(groups)
         unilateralSideCount = 0
         restContextBySetId = restContextByPlannedSetId(groups)
+        roundSetIdsBySetId = roundPlannedSetIdsBySetId(groups)
         lastSetIdByGroup = lastSetIdByGroup(groups)
         _currentPlannedSetId.value = flattenedPrescription.firstOrNull()?.id
     }
@@ -348,30 +352,34 @@ class CaptureViewModel(
         } else {
             // Bilateral set, or side 2 of a unilateral set: advance to the next entry.
             unilateralSideCount = 0
-            val idx = flattenedPrescription.indexOfFirst { it.id == plannedSetId }
+            val completedPlannedSetId = plannedSetId
+            val idx = flattenedPrescription.indexOfFirst { it.id == completedPlannedSetId }
             _currentPlannedSetId.value = flattenedPrescription.getOrNull(idx + 1)?.id
 
             // Auto-start the rest countdown for the set just completed (write already
             // committed above). STRAIGHT groups trigger after every set; GIANT_SET groups
             // only after the round's last item — see shouldStartRest / restContextByPlannedSetId.
-            restContextBySetId[plannedSetId]?.let { ctx ->
-                if (ctx.triggersRest) {
-                    val tapEnum = tap?.let { runCatching { FeedbackTap.valueOf(it) }.getOrNull() }
-                        ?: FeedbackTap.ON_TARGET
-                    startRest(restSeconds(ctx.baseRestSeconds, ctx.tierLabel, tapEnum, ctx.isGiantSet))
+            if (completedPlannedSetId != null) {
+                restContextBySetId[completedPlannedSetId]?.let { ctx ->
+                    if (ctx.triggersRest) {
+                        val roundSetIds = roundSetIdsBySetId[completedPlannedSetId]
+                            ?: listOf(completedPlannedSetId)
+                        val tapEnum = hardestTapForRound(_loggedSetActuals.value, roundSetIds)
+                        startRest(restSeconds(ctx.baseRestSeconds, ctx.tierLabel, tapEnum, ctx.isGiantSet))
+                    }
                 }
-            }
 
-            // Group-review trigger: if the set just logged was this group's LAST cursor entry,
-            // open the review sheet (prefilled from any existing drafts). Reads state AFTER the
-            // Room commit + cursor advance — never gates the write.
-            lastSetIdByGroup[plannedSetId]?.let { group ->
-                val prefill = repo.reviewDraftsFor(
-                    sessionId,
-                    group.exercises.map { it.movement_id },
-                    anchorMovementId = group.exercises.first().movement_id,
-                )
-                _pendingReview.value = GroupReview(group, prefill.surveys, prefill.noteText)
+                // Group-review trigger: if the set just logged was this group's LAST cursor entry,
+                // open the review sheet (prefilled from any existing drafts). Reads state AFTER the
+                // Room commit + cursor advance — never gates the write.
+                lastSetIdByGroup[completedPlannedSetId]?.let { group ->
+                    val prefill = repo.reviewDraftsFor(
+                        sessionId,
+                        group.exercises.map { it.movement_id },
+                        anchorMovementId = group.exercises.first().movement_id,
+                    )
+                    _pendingReview.value = GroupReview(group, prefill.surveys, prefill.noteText)
+                }
             }
         }
     }
@@ -449,36 +457,21 @@ class CaptureViewModel(
     }
 
     /**
-     * (Re)starts the rest countdown at [seconds], ticking down once per second until it hits
-     * zero, then clearing to null. Cancels any prior ticker first so back-to-back triggers
-     * (e.g. a fast-fingered lifter logging two STRAIGHT sets before the first countdown ends)
-     * restart cleanly instead of running two tickers against the same state.
+     * (Re)starts the service-owned rest countdown at [seconds]. Back-to-back triggers restart
+     * the foreground service timer instead of running any ViewModel-local ticker.
      */
     private fun startRest(seconds: Int) {
-        restJob?.cancel()
-        _restRemainingSeconds.value = seconds
-        restJob = viewModelScope.launch {
-            while (true) {
-                delay(1000)
-                val next = (_restRemainingSeconds.value ?: 0) - 1
-                if (next <= 0) {
-                    _restRemainingSeconds.value = null
-                    break
-                }
-                _restRemainingSeconds.value = next
-            }
-        }
+        restTimerController.startRest(seconds)
     }
 
     /** Skip the current rest countdown immediately — the user is ready to go again. */
     fun skipRest() {
-        restJob?.cancel()
-        _restRemainingSeconds.value = null
+        restTimerController.skipRest()
     }
 
     /** Extend a running countdown by [extraSeconds] (default 30). No-op if none is running. */
     fun addRestTime(extraSeconds: Int = 30) {
-        _restRemainingSeconds.value?.let { _restRemainingSeconds.value = it + extraSeconds }
+        restTimerController.addRestTime(extraSeconds)
     }
 
     /**
@@ -545,7 +538,11 @@ class CaptureViewModel(
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
                     as IronLogV2Application
-                CaptureViewModel(repo = app.container.captureRepo, sessionId = 0)
+                CaptureViewModel(
+                    repo = app.container.captureRepo,
+                    sessionId = 0,
+                    restTimerController = AndroidRestTimerController(app.applicationContext),
+                )
             }
         }
 
@@ -557,6 +554,7 @@ class CaptureViewModel(
                 CaptureViewModel(
                     repo = app.container.captureRepo,
                     sessionId = sessionId,
+                    restTimerController = AndroidRestTimerController(app.applicationContext),
                 )
             }
         }
