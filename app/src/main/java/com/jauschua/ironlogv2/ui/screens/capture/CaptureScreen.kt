@@ -1,5 +1,11 @@
 package com.jauschua.ironlogv2.ui.screens.capture
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.view.WindowManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,10 +43,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import android.view.WindowManager
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
@@ -193,25 +200,22 @@ private fun SessionContent(
     // A group is expanded if manually overridden; otherwise iff it holds the cursor.
     fun isGroupExpanded(gi: Int): Boolean = expandOverrides[gi] ?: (gi == currentGroupIndex)
 
-    // Alarm-stream tone cues driven off the countdown value (see RestToneCue). The VM's ticker
-    // emits 120…2, 1, then null (it never emits 0 — `next <= 0` clears to null and breaks), so
-    // completion is the 1 → null transition. A skip clears from an arbitrary value to null, so
-    // only fire the end tone when the PREVIOUS value was 1 (natural completion), not on skip.
-    val toneCue = remember { RestToneCue() }
-    DisposableEffect(Unit) { onDispose { toneCue.release() } }
-    var prevRest by remember { mutableStateOf<Int?>(null) }
-    LaunchedEffect(restRemainingSeconds) {
-        when (val remaining = restRemainingSeconds) {
-            15 -> toneCue.warning()
-            3, 2, 1 -> toneCue.tick()
-            null -> if (prevRest == 1) toneCue.done()
-            else -> {}
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+    LaunchedEffect(restRemainingSeconds != null) {
+        if (
+            restRemainingSeconds != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        prevRest = restRemainingSeconds
     }
 
-    // Keep the screen awake while resting so the countdown keeps ticking and the tones fire;
-    // clear the flag the moment the rest ends or the screen leaves composition.
+    // Keep the visible capture screen awake while resting; the service owns ticking and tones.
     val view = LocalView.current
     DisposableEffect(restRemainingSeconds != null) {
         val window = view.context.findActivity()?.window

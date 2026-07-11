@@ -15,6 +15,7 @@ import com.jauschua.ironlogv2.data.local.SetLogDraft
 import com.jauschua.ironlogv2.data.local.SurveyDraft
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
+import com.jauschua.ironlogv2.service.RestTimerController
 import com.jauschua.ironlogv2.ui.UiState
 import com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
@@ -28,7 +29,9 @@ import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -84,6 +87,30 @@ private class FakeGatedDao(
     override suspend fun noteForMovement(sessionId: Int, movementId: Int): NoteDraft? = null
     override suspend fun deleteSessionNote(sessionId: Int) {}
     override suspend fun sessionNote(sessionId: Int): NoteDraft? = null
+}
+
+private class RecordingRestTimerController : RestTimerController {
+    private val _remainingSeconds = MutableStateFlow<Int?>(null)
+    override val remainingSeconds: StateFlow<Int?> = _remainingSeconds.asStateFlow()
+
+    val startedSeconds = mutableListOf<Int>()
+    var skipCalls = 0
+    val addedSeconds = mutableListOf<Int>()
+
+    override fun startRest(seconds: Int) {
+        startedSeconds += seconds
+        _remainingSeconds.value = seconds
+    }
+
+    override fun skipRest() {
+        skipCalls += 1
+        _remainingSeconds.value = null
+    }
+
+    override fun addRestTime(extraSeconds: Int) {
+        addedSeconds += extraSeconds
+        _remainingSeconds.value = _remainingSeconds.value?.plus(extraSeconds)
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -338,6 +365,48 @@ class CaptureViewModelTest {
         )
         val flat = flattenPrescription(listOf(group))
         assertEquals(listOf(10, 11, 20, 21), flat.map { it.id })
+    }
+
+    @Test
+    fun giant_set_rest_uses_hardest_tap_from_the_completed_round() = runBlocking {
+        val (repo, _) = deps()
+        val timer = RecordingRestTimerController()
+        val vm = CaptureViewModel(repo, sessionId = 7, restTimerController = timer)
+        val e1 = exercise(id = 1, idBase = 100, rounds = 2)
+        val e2 = exercise(id = 2, idBase = 200, rounds = 2)
+        val e3 = exercise(id = 3, idBase = 300, rounds = 2)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "GIANT_SET", rounds = 2,
+            label = "T3", rest_seconds = 60, exercises = listOf(e1, e2, e3),
+        )
+        vm.initPrescriptionForTestFromGroups(listOf(group))
+
+        vm.logWorkingSet(plannedSetId = 100, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "TOO_EASY")
+        vm.logWorkingSet(plannedSetId = 200, movementId = 2, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "TOO_HARD")
+        vm.logWorkingSet(plannedSetId = 300, movementId = 3, setIndex = 0, setRole = "WORKING",
+            actualLoad = 100.0, actualReps = 8, tap = "ON_TARGET")
+
+        assertEquals(
+            "trigger set was ON_TARGET, but the round's hardest tap was TOO_HARD",
+            listOf(90),
+            timer.startedSeconds,
+        )
+        assertEquals(90, vm.restRemainingSeconds.value)
+    }
+
+    @Test
+    fun rest_timer_controls_route_to_controller() {
+        val (repo, _) = deps()
+        val timer = RecordingRestTimerController()
+        val vm = CaptureViewModel(repo, sessionId = 7, restTimerController = timer)
+
+        vm.skipRest()
+        vm.addRestTime(45)
+
+        assertEquals(1, timer.skipCalls)
+        assertEquals(listOf(45), timer.addedSeconds)
     }
 
     /**

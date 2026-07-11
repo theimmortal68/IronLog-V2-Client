@@ -32,7 +32,7 @@ import kotlin.math.sin
  * devices) degrades to silence rather than crashing the capture screen. The caller must [release]
  * the track (a `DisposableEffect` `onDispose`) when the screen leaves composition.
  */
-internal class RestToneCue {
+class RestToneCue {
     /** The most recently played track, held so [release] (and the next cue) can free it. */
     private var currentTrack: AudioTrack? = null
 

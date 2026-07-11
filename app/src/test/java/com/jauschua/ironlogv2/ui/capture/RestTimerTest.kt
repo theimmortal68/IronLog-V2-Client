@@ -5,9 +5,12 @@ import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.FeedbackTap
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
+import com.jauschua.ironlogv2.ui.screens.capture.LoggedSetActual
 import com.jauschua.ironlogv2.ui.screens.capture.formatRestTime
+import com.jauschua.ironlogv2.ui.screens.capture.hardestTapForRound
 import com.jauschua.ironlogv2.ui.screens.capture.restContextByPlannedSetId
 import com.jauschua.ironlogv2.ui.screens.capture.restSeconds
+import com.jauschua.ironlogv2.ui.screens.capture.roundPlannedSetIdsBySetId
 import com.jauschua.ironlogv2.ui.screens.capture.shouldStartRest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -47,14 +50,15 @@ class RestTimerTest {
         assertEquals(120, restSeconds(120, "T1b", FeedbackTap.ON_TARGET, false))
     }
 
+    // Giant sets are now RPE-adaptive: tap scales duration (behavior change per spec 01)
     @Test
-    fun restSeconds_t2_giant_set_is_fixed_tap_ignored() {
-        assertEquals(90, restSeconds(90, "T2 GS", FeedbackTap.TOO_HARD, true))
+    fun restSeconds_t2_giant_set_is_adaptive() {
+        assertEquals(135, restSeconds(90, "T2 GS", FeedbackTap.TOO_HARD, true))
     }
 
     @Test
-    fun restSeconds_t3_giant_set_is_fixed_tap_ignored() {
-        assertEquals(60, restSeconds(60, "T3 GS", FeedbackTap.TOO_EASY, true))
+    fun restSeconds_t3_giant_set_is_adaptive() {
+        assertEquals(45, restSeconds(60, "T3 GS", FeedbackTap.TOO_EASY, true))
     }
 
     // ── shouldStartRest: STRAIGHT after each set, GIANT_SET after the round's last item ──
@@ -141,5 +145,52 @@ class RestTimerTest {
     @Test
     fun formatRestTime_shows_minutes_and_seconds() {
         assertEquals("2:03", formatRestTime(123))
+    }
+
+    // ── hardestTapForRound: reduces round taps to worst (TOO_HARD > ON_TARGET > TOO_EASY) ──
+
+    @Test
+    fun hardestTapForRound_returns_too_hard_if_any_too_hard() {
+        val actuals = mapOf(
+            101 to LoggedSetActual(100.0, 5, "TOO_EASY"),
+            102 to LoggedSetActual(100.0, 5, "TOO_HARD"),
+            103 to LoggedSetActual(100.0, 5, "ON_TARGET")
+        )
+        assertEquals(FeedbackTap.TOO_HARD, hardestTapForRound(actuals, listOf(101, 102, 103)))
+    }
+
+    @Test
+    fun hardestTapForRound_returns_on_target_if_missing_or_default() {
+        val actuals = mapOf(
+            101 to LoggedSetActual(100.0, 5, "TOO_EASY")
+            // 102 missing/unlogged
+        )
+        assertEquals(FeedbackTap.ON_TARGET, hardestTapForRound(actuals, listOf(101, 102)))
+    }
+
+    @Test
+    fun hardestTapForRound_returns_too_easy_if_all_too_easy() {
+        val actuals = mapOf(
+            101 to LoggedSetActual(100.0, 5, "TOO_EASY"),
+            102 to LoggedSetActual(100.0, 5, "TOO_EASY")
+        )
+        assertEquals(FeedbackTap.TOO_EASY, hardestTapForRound(actuals, listOf(101, 102)))
+    }
+
+    // ── roundPlannedSetIdsBySetId: maps set id to round planned set ids ──────────────────
+
+    @Test
+    fun roundPlannedSetIdsBySetId_groups_by_round_index_for_giant_set() {
+        val e1 = exerciseWithSets(1, listOf(101, 102))
+        val e2 = exerciseWithSets(2, listOf(201, 202))
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "GIANT_SET", rounds = 2,
+            exercises = listOf(e1, e2)
+        )
+        val map = roundPlannedSetIdsBySetId(listOf(group))
+        assertEquals(listOf(101, 201), map[101])
+        assertEquals(listOf(101, 201), map[201])
+        assertEquals(listOf(102, 202), map[102])
+        assertEquals(listOf(102, 202), map[202])
     }
 }
