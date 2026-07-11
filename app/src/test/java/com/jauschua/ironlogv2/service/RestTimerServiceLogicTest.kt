@@ -36,11 +36,27 @@ class RestTimerServiceLogicTest {
     }
 
     @Test
-    fun shouldRefreshRestNotification_limits_updates_until_final_countdown() {
+    fun shouldRefreshRestNotification_refreshes_on_every_countdown_change() {
         assertTrue(shouldRefreshRestNotification(previous = null, current = 120))
-        assertTrue(shouldRefreshRestNotification(previous = 120, current = 115))
-        assertFalse(shouldRefreshRestNotification(previous = 120, current = 119))
+        assertTrue(shouldRefreshRestNotification(previous = 120, current = 119))
         assertTrue(shouldRefreshRestNotification(previous = 16, current = 15))
+        assertFalse(shouldRefreshRestNotification(previous = 15, current = 15))
         assertTrue(shouldRefreshRestNotification(previous = 1, current = null))
+    }
+
+    @Test
+    fun restTimerCountdownIconText_uses_legible_seconds_for_active_rests() {
+        assertNull(restTimerCountdownIconText(-1))
+        assertNull(restTimerCountdownIconText(0))
+        assertEquals("1", restTimerCountdownIconText(1))
+        assertEquals("93", restTimerCountdownIconText(93))
+        assertEquals("180", restTimerCountdownIconText(180))
+        assertEquals("999", restTimerCountdownIconText(999))
+    }
+
+    @Test
+    fun restTimerCountdownIconText_switches_to_minutes_for_four_digit_seconds() {
+        assertEquals("17", restTimerCountdownIconText(1_000))
+        assertEquals("18", restTimerCountdownIconText(1_021))
     }
 }

@@ -8,13 +8,21 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.IconCompat
 import com.jauschua.ironlogv2.R
 import com.jauschua.ironlogv2.ui.MainActivity
 import com.jauschua.ironlogv2.ui.screens.capture.RestToneCue
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -101,10 +109,77 @@ internal fun restTimerToneForTransition(previous: Int?, current: Int?): RestTime
     else -> null
 }
 
-internal fun shouldRefreshRestNotification(previous: Int?, current: Int?): Boolean {
-    if (current == null) return previous != null
-    if (previous == null) return true
-    return current <= 15 || current % 5 == 0
+internal fun shouldRefreshRestNotification(previous: Int?, current: Int?): Boolean = previous != current
+
+internal fun restTimerCountdownIconText(remainingSeconds: Int): String? {
+    val normalized = normalizedRestDurationSeconds(remainingSeconds)
+    if (normalized <= 0) return null
+
+    // Exact seconds keep the status-bar icon live for normal rests; 4+ digits become minute counts
+    // because shrinking that many digits into a notification small icon is not realistically legible.
+    return if (normalized <= MAX_EXACT_ICON_SECONDS) {
+        normalized.toString()
+    } else {
+        ceil(normalized / SECONDS_PER_MINUTE.toDouble()).toInt().toString()
+    }
+}
+
+internal fun renderCountdownIcon(remainingSeconds: Int, context: Context): IconCompat {
+    val text = restTimerCountdownIconText(remainingSeconds)
+        ?: return staticRestTimerNotificationIcon(context)
+    val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
+    val sizePx = (NOTIFICATION_ICON_SIZE_DP * density)
+        .roundToInt()
+        .coerceAtLeast(NOTIFICATION_ICON_MIN_SIZE_PX)
+    val paddingPx = NOTIFICATION_ICON_PADDING_DP * density
+    val maxTextWidth = sizePx - paddingPx * 2f
+    val maxTextHeight = sizePx - paddingPx * 2f
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textSize = fitCountdownIconTextSize(text, this, maxTextWidth, maxTextHeight)
+    }
+    val metrics = paint.fontMetrics
+    val baseline = sizePx / 2f - (metrics.ascent + metrics.descent) / 2f
+
+    canvas.drawText(text, sizePx / 2f, baseline, paint)
+    return IconCompat.createWithBitmap(bitmap)
+}
+
+private fun restTimerNotificationIcon(context: Context, remainingSeconds: Int?): IconCompat =
+    remainingSeconds
+        ?.let { runCatching { renderCountdownIcon(it, context) }.getOrNull() }
+        ?: staticRestTimerNotificationIcon(context)
+
+private fun staticRestTimerNotificationIcon(context: Context): IconCompat =
+    IconCompat.createWithResource(context, R.drawable.ic_rest_timer_notification)
+
+private fun fitCountdownIconTextSize(
+    text: String,
+    paint: Paint,
+    maxWidth: Float,
+    maxHeight: Float,
+): Float {
+    var low = 1f
+    var high = maxHeight
+
+    repeat(TEXT_FIT_ITERATIONS) {
+        val midpoint = (low + high) / 2f
+        paint.textSize = midpoint
+        val metrics = paint.fontMetrics
+        val textHeight = metrics.descent - metrics.ascent
+
+        if (paint.measureText(text) <= maxWidth && textHeight <= maxHeight) {
+            low = midpoint
+        } else {
+            high = midpoint
+        }
+    }
+
+    return low
 }
 
 class RestTimerService : Service() {
@@ -230,7 +305,7 @@ class RestTimerService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(restTimerNotificationIcon(this, remainingSeconds))
             .setContentTitle(content.title)
             .setContentText(content.text)
             .setContentIntent(pendingIntent)
@@ -291,3 +366,10 @@ class RestTimerService : Service() {
         }
     }
 }
+
+private const val NOTIFICATION_ICON_SIZE_DP = 24f
+private const val NOTIFICATION_ICON_PADDING_DP = 1.5f
+private const val NOTIFICATION_ICON_MIN_SIZE_PX = 24
+private const val TEXT_FIT_ITERATIONS = 12
+private const val MAX_EXACT_ICON_SECONDS = 999
+private const val SECONDS_PER_MINUTE = 60
