@@ -109,7 +109,24 @@ internal fun restTimerToneForTransition(previous: Int?, current: Int?): RestTime
     else -> null
 }
 
-internal fun shouldRefreshRestNotification(previous: Int?, current: Int?): Boolean = previous != current
+internal fun shouldRefreshRestNotification(
+    previous: Int?,
+    current: Int?,
+    lastNotificationRemaining: Int? = previous,
+): Boolean {
+    if (previous == current) return false
+    if (current == null || previous == null) return true
+    if (current > previous) return true
+    if (previous - current != 1) return true
+
+    // The OS chronometer keeps counting every second from its timestamp. Refresh the bitmap icon
+    // every 3 seconds during normal rests to avoid sustained SystemUI redraw churn, while keeping
+    // the final warning/tick window visually exact.
+    if (current <= REST_NOTIFICATION_URGENT_REFRESH_WINDOW_SECONDS) return true
+
+    val lastIconRefresh = lastNotificationRemaining ?: return true
+    return lastIconRefresh - current >= REST_NOTIFICATION_ICON_REFRESH_INTERVAL_SECONDS
+}
 
 internal fun restTimerCountdownIconText(remainingSeconds: Int): String? {
     val normalized = normalizedRestDurationSeconds(remainingSeconds)
@@ -136,6 +153,11 @@ internal fun renderCountdownIcon(remainingSeconds: Int, context: Context): IconC
     val maxTextHeight = sizePx - paddingPx * 2f
     val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
+    val center = sizePx / 2f
+    val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = NOTIFICATION_ICON_BACKGROUND_COLOR
+        style = Paint.Style.FILL
+    }
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
@@ -145,7 +167,8 @@ internal fun renderCountdownIcon(remainingSeconds: Int, context: Context): IconC
     val metrics = paint.fontMetrics
     val baseline = sizePx / 2f - (metrics.ascent + metrics.descent) / 2f
 
-    canvas.drawText(text, sizePx / 2f, baseline, paint)
+    canvas.drawCircle(center, center, center - 0.5f, backgroundPaint)
+    canvas.drawText(text, center, baseline, paint)
     return IconCompat.createWithBitmap(bitmap)
 }
 
@@ -268,7 +291,7 @@ class RestTimerService : Service() {
     }
 
     private fun refreshNotification(previous: Int?, current: Int?) {
-        if (!shouldRefreshRestNotification(previous, current)) return
+        if (!shouldRefreshRestNotification(previous, current, lastNotificationRemaining)) return
         if (current == null) return
 
         val notification = buildNotification(current)
@@ -313,6 +336,7 @@ class RestTimerService : Service() {
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setWhen(System.currentTimeMillis() + remainingSeconds * 1_000L)
             .setUsesChronometer(true)
             .setChronometerCountDown(true)
@@ -370,6 +394,9 @@ class RestTimerService : Service() {
 private const val NOTIFICATION_ICON_SIZE_DP = 24f
 private const val NOTIFICATION_ICON_PADDING_DP = 1.5f
 private const val NOTIFICATION_ICON_MIN_SIZE_PX = 24
+private const val NOTIFICATION_ICON_BACKGROUND_COLOR = -14730605 // #1F3A93
 private const val TEXT_FIT_ITERATIONS = 12
 private const val MAX_EXACT_ICON_SECONDS = 999
 private const val SECONDS_PER_MINUTE = 60
+private const val REST_NOTIFICATION_ICON_REFRESH_INTERVAL_SECONDS = 3
+private const val REST_NOTIFICATION_URGENT_REFRESH_WINDOW_SECONDS = 15
