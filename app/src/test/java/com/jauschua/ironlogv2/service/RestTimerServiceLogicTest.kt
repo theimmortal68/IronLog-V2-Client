@@ -16,11 +16,11 @@ class RestTimerServiceLogicTest {
     }
 
     @Test
-    fun restTimerNotificationContent_formats_remaining_time() {
+    fun restTimerNotificationContent_uses_static_text() {
         val content = restTimerNotificationContent(125)
 
         assertEquals("Rest timer", content.title)
-        assertEquals("2:05 remaining", content.text)
+        assertEquals("Tap to return to your workout", content.text)
         assertTrue(content.ongoing)
     }
 
