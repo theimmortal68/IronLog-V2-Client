@@ -36,12 +36,34 @@ class RestTimerServiceLogicTest {
     }
 
     @Test
-    fun shouldRefreshRestNotification_refreshes_on_every_countdown_change() {
-        assertTrue(shouldRefreshRestNotification(previous = null, current = 120))
-        assertTrue(shouldRefreshRestNotification(previous = 120, current = 119))
-        assertTrue(shouldRefreshRestNotification(previous = 16, current = 15))
-        assertFalse(shouldRefreshRestNotification(previous = 15, current = 15))
-        assertTrue(shouldRefreshRestNotification(previous = 1, current = null))
+    fun shouldRefreshRestNotification_uses_conservative_cadence_before_final_seconds() {
+        assertTrue(
+            shouldRefreshRestNotification(previous = null, current = 120, lastNotificationRemaining = null),
+        )
+        assertFalse(
+            shouldRefreshRestNotification(previous = 120, current = 119, lastNotificationRemaining = 120),
+        )
+        assertFalse(
+            shouldRefreshRestNotification(previous = 119, current = 118, lastNotificationRemaining = 120),
+        )
+        assertTrue(
+            shouldRefreshRestNotification(previous = 118, current = 117, lastNotificationRemaining = 120),
+        )
+        assertTrue(
+            shouldRefreshRestNotification(previous = 90, current = 120, lastNotificationRemaining = 90),
+        )
+        assertTrue(
+            shouldRefreshRestNotification(previous = 16, current = 15, lastNotificationRemaining = 18),
+        )
+        assertTrue(
+            shouldRefreshRestNotification(previous = 15, current = 14, lastNotificationRemaining = 15),
+        )
+        assertFalse(
+            shouldRefreshRestNotification(previous = 15, current = 15, lastNotificationRemaining = 15),
+        )
+        assertTrue(
+            shouldRefreshRestNotification(previous = 1, current = null, lastNotificationRemaining = 1),
+        )
     }
 
     @Test
