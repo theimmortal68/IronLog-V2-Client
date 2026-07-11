@@ -405,5 +405,7 @@ private const val NOTIFICATION_ICON_BACKGROUND_COLOR = -14730605 // #1F3A93
 private const val TEXT_FIT_ITERATIONS = 12
 private const val MAX_EXACT_ICON_SECONDS = 999
 private const val SECONDS_PER_MINUTE = 60
-private const val REST_NOTIFICATION_ICON_REFRESH_INTERVAL_SECONDS = 3
+// Per-second refresh: well within Android's ~10/sec (recommended ≤5/sec) notification
+// update ceiling, and matches the live-countdown feel the icon is meant to convey.
+private const val REST_NOTIFICATION_ICON_REFRESH_INTERVAL_SECONDS = 1
 private const val REST_NOTIFICATION_URGENT_REFRESH_WINDOW_SECONDS = 15

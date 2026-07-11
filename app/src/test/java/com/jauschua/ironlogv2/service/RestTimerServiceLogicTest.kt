@@ -36,14 +36,14 @@ class RestTimerServiceLogicTest {
     }
 
     @Test
-    fun shouldRefreshRestNotification_uses_conservative_cadence_before_final_seconds() {
+    fun shouldRefreshRestNotification_uses_per_second_cadence_before_final_seconds() {
         assertTrue(
             shouldRefreshRestNotification(previous = null, current = 120, lastNotificationRemaining = null),
         )
-        assertFalse(
+        assertTrue(
             shouldRefreshRestNotification(previous = 120, current = 119, lastNotificationRemaining = 120),
         )
-        assertFalse(
+        assertTrue(
             shouldRefreshRestNotification(previous = 119, current = 118, lastNotificationRemaining = 120),
         )
         assertTrue(
