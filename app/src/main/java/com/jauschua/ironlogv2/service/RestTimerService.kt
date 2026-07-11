@@ -18,6 +18,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
+import androidx.core.graphics.drawable.toBitmap
 import com.jauschua.ironlogv2.R
 import com.jauschua.ironlogv2.ui.MainActivity
 import com.jauschua.ironlogv2.ui.screens.capture.RestToneCue
@@ -208,6 +209,11 @@ private fun fitCountdownIconTextSize(
 class RestTimerService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val toneCue = RestToneCue()
+    private val appIconBitmap: Bitmap by lazy {
+        requireNotNull(ContextCompat.getDrawable(this, R.mipmap.ic_launcher)) {
+            "Launcher icon resource not found"
+        }.toBitmap()
+    }
     private var countdownJob: Job? = null
     private var foregroundStarted = false
     private var lastNotificationRemaining: Int? = null
@@ -329,6 +335,7 @@ class RestTimerService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(restTimerNotificationIcon(this, remainingSeconds))
+            .setLargeIcon(appIconBitmap)
             .setContentTitle(content.title)
             .setContentText(content.text)
             .setContentIntent(pendingIntent)
