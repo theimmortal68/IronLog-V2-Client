@@ -15,7 +15,6 @@ import androidx.core.content.ContextCompat
 import com.jauschua.ironlogv2.R
 import com.jauschua.ironlogv2.ui.MainActivity
 import com.jauschua.ironlogv2.ui.screens.capture.RestToneCue
-import com.jauschua.ironlogv2.ui.screens.capture.formatRestTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -91,7 +90,7 @@ internal fun normalizedRestDurationSeconds(seconds: Int): Int = seconds.coerceAt
 internal fun restTimerNotificationContent(remainingSeconds: Int): RestTimerNotificationContent =
     RestTimerNotificationContent(
         title = "Rest timer",
-        text = "${formatRestTime(remainingSeconds)} remaining",
+        text = "Tap to return to your workout",
         ongoing = true,
     )
 
@@ -249,7 +248,7 @@ class RestTimerService : Service() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Rest timer",
-            NotificationManager.IMPORTANCE_LOW,
+            NotificationManager.IMPORTANCE_DEFAULT,
         ).apply {
             description = "Workout rest countdown"
         }
