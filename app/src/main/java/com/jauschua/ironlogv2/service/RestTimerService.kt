@@ -156,6 +156,7 @@ class RestTimerService : Service() {
                 refreshNotification(previous = current, current = next)
 
                 if (next == null) {
+                    delay(DONE_TONE_TEARDOWN_DELAY_MS)
                     stopTimer(stopService = true)
                     break
                 }
@@ -262,6 +263,7 @@ class RestTimerService : Service() {
         private const val ACTION_SKIP = "com.jauschua.ironlogv2.rest_timer.SKIP"
         private const val ACTION_ADD_TIME = "com.jauschua.ironlogv2.rest_timer.ADD_TIME"
         private const val EXTRA_SECONDS = "seconds"
+        private const val DONE_TONE_TEARDOWN_DELAY_MS = 450L
 
         private val _remainingSeconds = MutableStateFlow<Int?>(null)
         val remainingSeconds: StateFlow<Int?> = _remainingSeconds.asStateFlow()

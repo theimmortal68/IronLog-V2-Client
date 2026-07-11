@@ -94,6 +94,8 @@ private class RecordingRestTimerController : RestTimerController {
     override val remainingSeconds: StateFlow<Int?> = _remainingSeconds.asStateFlow()
 
     val startedSeconds = mutableListOf<Int>()
+    var skipCalls = 0
+    val addedSeconds = mutableListOf<Int>()
 
     override fun startRest(seconds: Int) {
         startedSeconds += seconds
@@ -101,10 +103,12 @@ private class RecordingRestTimerController : RestTimerController {
     }
 
     override fun skipRest() {
+        skipCalls += 1
         _remainingSeconds.value = null
     }
 
     override fun addRestTime(extraSeconds: Int) {
+        addedSeconds += extraSeconds
         _remainingSeconds.value = _remainingSeconds.value?.plus(extraSeconds)
     }
 }
@@ -390,6 +394,19 @@ class CaptureViewModelTest {
             timer.startedSeconds,
         )
         assertEquals(90, vm.restRemainingSeconds.value)
+    }
+
+    @Test
+    fun rest_timer_controls_route_to_controller() {
+        val (repo, _) = deps()
+        val timer = RecordingRestTimerController()
+        val vm = CaptureViewModel(repo, sessionId = 7, restTimerController = timer)
+
+        vm.skipRest()
+        vm.addRestTime(45)
+
+        assertEquals(1, timer.skipCalls)
+        assertEquals(listOf(45), timer.addedSeconds)
     }
 
     /**
