@@ -1,6 +1,7 @@
 // CaptureModels.kt
 package com.jauschua.ironlogv2.data.api.dto
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 @Serializable data class SetLogIn(
     val planned_set_id: Int? = null, val movement_id: Int, val set_index: Int,
@@ -40,7 +41,14 @@ import kotlinx.serialization.Serializable
     val rest_seconds: Int? = null, val label: String? = null, val exercises: List<ExerciseOut>,
     val shoe: String? = null,
 )
+@Serializable data class FinisherOut(
+    val exercise_name: String,
+    val duration_minutes: Int,
+    val params: JsonObject = JsonObject(emptyMap()),
+    val current_duration_seconds: Int? = null,
+    val current_rope: String? = null,
+)
 @Serializable data class SessionDetailResponse(
     val id: Int, val date: String, val day_role: String, val phase: String,
-    val status: String, val groups: List<GroupOut>,
+    val status: String, val groups: List<GroupOut>, val finisher: FinisherOut? = null,
 )
