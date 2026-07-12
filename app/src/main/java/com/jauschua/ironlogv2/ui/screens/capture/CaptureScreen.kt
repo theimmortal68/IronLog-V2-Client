@@ -121,7 +121,7 @@ private fun SessionContent(
     uiError: String?,
     submitResult: String?,
     restRemainingSeconds: Int?,
-    loggedSetActuals: Map<Int, LoggedSetActual>,
+    loggedSetActuals: Map<Pair<Int, Int>, LoggedSetActual>,
     scope: CoroutineScope,
     vm: CaptureViewModel,
 ) {
@@ -161,17 +161,17 @@ private fun SessionContent(
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
     var setFeltPeak by remember(currentPlannedSetId) { mutableStateOf("") }
 
-    // Fix B — editable logged sets: which past set's card is currently reopened for correction
+    // Fix B — editable logged sets: which past set-side card is currently reopened for correction
     // (null = none). Only one at a time; re-tapping the same card closes it.
-    var editingSetId by remember { mutableStateOf<Int?>(null) }
-    var editLoad by remember(editingSetId) {
-        mutableStateOf(loggedSetActuals[editingSetId]?.actualLoad?.let(::formatWeight) ?: "")
+    var editingSetKey by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var editLoad by remember(editingSetKey) {
+        mutableStateOf(loggedSetActuals[editingSetKey]?.actualLoad?.let(::formatWeight) ?: "")
     }
-    var editReps by remember(editingSetId) {
-        mutableStateOf(loggedSetActuals[editingSetId]?.actualReps?.toString() ?: "")
+    var editReps by remember(editingSetKey) {
+        mutableStateOf(loggedSetActuals[editingSetKey]?.actualReps?.toString() ?: "")
     }
-    var editTap by remember(editingSetId) {
-        mutableStateOf(loggedSetActuals[editingSetId]?.tap)
+    var editTap by remember(editingSetKey) {
+        mutableStateOf(loggedSetActuals[editingSetKey]?.tap)
     }
 
     // Scroll-into-view: when the cursor advances to a new set, the accordion re-flows (the
@@ -382,77 +382,86 @@ private fun SessionContent(
                             val isPast = plannedSet.id in pastIds
                             val tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")
 
-                            itemKeys.add("set-${plannedSet.id}")
-                            item(key = "set-${plannedSet.id}") {
-                                // Unilateral logged cards are non-editable (see isSetEditable) —
-                                // editing one card would corrupt the hidden other side.
-                                val editable = isSetEditable(isPast, exercise.unilateral)
-                                val isEditing = editable && editingSetId == plannedSet.id
-                                SetCard(
-                                    plannedSet = plannedSet,
-                                    unilateral = exercise.unilateral,
-                                    isCurrent = isCurrent,
-                                    isPast = isPast,
-                                    tapRequired = tapRequired,
-                                    setLoad = if (isCurrent) setLoad else "",
-                                    setReps = if (isCurrent) setReps else "",
-                                    selectedTap = if (isCurrent) selectedTap else null,
-                                    setFeltPeak = if (isCurrent) setFeltPeak else "",
-                                    onLoadChange = {
-                                        setLoad = it
-                                        currentExercise?.let { ex ->
-                                            carriedLoadByMovement =
-                                                withCarriedLoad(carriedLoadByMovement, ex.movement_id, it.toDoubleOrNull())
-                                        }
-                                    },
-                                    onRepsChange = { setReps = it },
-                                    onTapSelect = { selectedTap = it },
-                                    onFeltPeakChange = { setFeltPeak = it },
-                                    onLogSet = {
-                                        scope.launch {
-                                            vm.logWorkingSet(
-                                                plannedSetId = plannedSet.id,
-                                                movementId = exercise.movement_id,
-                                                setIndex = plannedSet.set_index,
-                                                setRole = plannedSet.set_role,
-                                                actualLoad = setLoad.toDoubleOrNull(),
-                                                actualReps = setReps.toIntOrNull(),
-                                                tap = selectedTap,
-                                                isWarmup = plannedSet.is_warmup,
-                                                feltPeak = setFeltPeak.toDoubleOrNull(),
-                                            )
-                                        }
-                                    },
-                                    // Fix B — logged sets show actuals and stay editable.
-                                    loggedActual = loggedSetActuals[plannedSet.id],
-                                    isEditing = isEditing,
-                                    editLoad = if (isEditing) editLoad else "",
-                                    editReps = if (isEditing) editReps else "",
-                                    editTap = if (isEditing) editTap else null,
-                                    onCardTap = {
-                                        if (editable) {
-                                            editingSetId = if (editingSetId == plannedSet.id) null else plannedSet.id
-                                        }
-                                    },
-                                    onEditLoadChange = { editLoad = it },
-                                    onEditRepsChange = { editReps = it },
-                                    onEditTapSelect = { editTap = it },
-                                    onSaveEdit = {
-                                        scope.launch {
-                                            vm.editLoggedSet(
-                                                plannedSetId = plannedSet.id,
-                                                movementId = exercise.movement_id,
-                                                setIndex = plannedSet.set_index,
-                                                setRole = plannedSet.set_role,
-                                                actualLoad = editLoad.toDoubleOrNull(),
-                                                actualReps = editReps.toIntOrNull(),
-                                                tap = editTap,
-                                                isWarmup = plannedSet.is_warmup,
-                                            )
-                                            editingSetId = null
-                                        }
-                                    },
-                                )
+                            val sideIndexes = if (exercise.unilateral && isPast) listOf(0, 1) else listOf(0)
+                            sideIndexes.forEach { sideIndex ->
+                                val itemKey = if (exercise.unilateral && isPast) {
+                                    "set-${plannedSet.id}-side-$sideIndex"
+                                } else {
+                                    "set-${plannedSet.id}"
+                                }
+                                itemKeys.add(itemKey)
+                                item(key = itemKey) {
+                                    val setKey = plannedSet.id to sideIndex
+                                    val editable = isSetEditable(isPast, exercise.unilateral)
+                                    val isEditing = editable && editingSetKey == setKey
+                                    SetCard(
+                                        plannedSet = plannedSet,
+                                        unilateral = exercise.unilateral,
+                                        sideLabel = if (exercise.unilateral && isPast) "Side ${sideIndex + 1}" else null,
+                                        isCurrent = isCurrent,
+                                        isPast = isPast,
+                                        tapRequired = tapRequired,
+                                        setLoad = if (isCurrent) setLoad else "",
+                                        setReps = if (isCurrent) setReps else "",
+                                        selectedTap = if (isCurrent) selectedTap else null,
+                                        setFeltPeak = if (isCurrent) setFeltPeak else "",
+                                        onLoadChange = {
+                                            setLoad = it
+                                            currentExercise?.let { ex ->
+                                                carriedLoadByMovement =
+                                                    withCarriedLoad(carriedLoadByMovement, ex.movement_id, it.toDoubleOrNull())
+                                            }
+                                        },
+                                        onRepsChange = { setReps = it },
+                                        onTapSelect = { selectedTap = it },
+                                        onFeltPeakChange = { setFeltPeak = it },
+                                        onLogSet = {
+                                            scope.launch {
+                                                vm.logWorkingSet(
+                                                    plannedSetId = plannedSet.id,
+                                                    movementId = exercise.movement_id,
+                                                    setIndex = plannedSet.set_index,
+                                                    setRole = plannedSet.set_role,
+                                                    actualLoad = setLoad.toDoubleOrNull(),
+                                                    actualReps = setReps.toIntOrNull(),
+                                                    tap = selectedTap,
+                                                    isWarmup = plannedSet.is_warmup,
+                                                    feltPeak = setFeltPeak.toDoubleOrNull(),
+                                                )
+                                            }
+                                        },
+                                        // Fix B — logged sets show actuals and stay editable.
+                                        loggedActual = loggedSetActuals[setKey],
+                                        isEditing = isEditing,
+                                        editLoad = if (isEditing) editLoad else "",
+                                        editReps = if (isEditing) editReps else "",
+                                        editTap = if (isEditing) editTap else null,
+                                        onCardTap = {
+                                            if (editable) {
+                                                editingSetKey = if (editingSetKey == setKey) null else setKey
+                                            }
+                                        },
+                                        onEditLoadChange = { editLoad = it },
+                                        onEditRepsChange = { editReps = it },
+                                        onEditTapSelect = { editTap = it },
+                                        onSaveEdit = {
+                                            scope.launch {
+                                                vm.editLoggedSet(
+                                                    plannedSetId = plannedSet.id,
+                                                    sideIndex = sideIndex,
+                                                    movementId = exercise.movement_id,
+                                                    setIndex = plannedSet.set_index,
+                                                    setRole = plannedSet.set_role,
+                                                    actualLoad = editLoad.toDoubleOrNull(),
+                                                    actualReps = editReps.toIntOrNull(),
+                                                    tap = editTap,
+                                                    isWarmup = plannedSet.is_warmup,
+                                                )
+                                                editingSetKey = null
+                                            }
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -617,6 +626,7 @@ private fun GroupHeader(
 private fun SetCard(
     plannedSet: PlannedSetOut,
     unilateral: Boolean,
+    sideLabel: String? = null,
     isCurrent: Boolean,
     isPast: Boolean,
     tapRequired: Boolean,
@@ -651,10 +661,8 @@ private fun SetCard(
 
     // Scroll-into-view for the current set is handled at the LazyColumn level (see
     // SessionContent's listState/itemKeys) — this card no longer carries its own relocation
-    // modifier. A PAST BILATERAL card is tappable to reopen its inputs and correct a mistake
-    // (fix B); the current card isn't (it's already open), not-yet-reached cards aren't (nothing
-    // logged), and UNILATERAL cards aren't (one card fronts two side-rows — editing would corrupt
-    // the hidden side; see isSetEditable, side-aware unilateral edit is a follow-on).
+    // modifier. A PAST card is tappable to reopen its inputs and correct a mistake; the current
+    // card isn't (it's already open), and not-yet-reached cards aren't (nothing logged).
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -672,7 +680,10 @@ private fun SetCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "${plannedSet.set_role} #${plannedSet.set_index + 1}",
+                    text = listOfNotNull(
+                        "${plannedSet.set_role} #${plannedSet.set_index + 1}",
+                        sideLabel,
+                    ).joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium,
                 )
                 if (isPast) {
@@ -1023,17 +1034,11 @@ internal fun rpeLabel(rpe: Double?): String? = rpe?.let { "RPE ${formatWeight(it
 internal fun perSideLabel(unilateral: Boolean): String? = if (unilateral) "Per side" else null
 
 /**
- * Whether a LOGGED card may be tapped to reopen its inputs for correction (fix B). True only for
- * a PAST, BILATERAL set. Unilateral sets are deliberately NON-editable for now: one card fronts
- * TWO rows (sideIndex 0 and 1), but `editLoggedSet`/`loggedSetActuals`/`existingLog` are keyed by
- * `plannedSetId` alone, so an edit would read side 1 (smallest draftId) and overwrite it with the
- * side-2 value the card displays — corrupting side 1. Display of the logged actual stays on
- * unilateral cards (see the `Actual:` line in [SetCard]); only tap-to-edit is gated off.
- *
- * Side-aware unilateral edit = follow-on: the real fix is keying loggedSetActuals / editingSetId /
- * existingLog by `(plannedSetId, sideIndex)` end-to-end plus per-side cards. Not built here.
+ * Whether a LOGGED card may be tapped to reopen its inputs for correction. True for any past set;
+ * unilateral past sets are rendered as separate side cards, so the caller can save against the
+ * correct side row.
  */
-internal fun isSetEditable(isPast: Boolean, unilateral: Boolean): Boolean = isPast && !unilateral
+internal fun isSetEditable(isPast: Boolean, unilateral: Boolean): Boolean = isPast
 
 /** Short result label for a logged set's tap, or null when no tap was recorded (e.g. warmup). */
 internal fun tapResultLabel(tap: String?): String? = when (tap) {
