@@ -133,11 +133,10 @@ class CaptureViewModel(
      * How many sides of the CURRENT cursor's planned set have been logged so far (0, 1, or 2).
      * Only meaningful while [_currentPlannedSetId] refers to a unilateral set (see
      * [unilateralSetIds]); ignored for bilateral sets, which always advance after one call.
-     * Resets to 0 whenever the cursor advances.  There is no side-1-vs-side-2 label recorded
-     * on the write itself — logging is a simple two-tap-per-unilateral-set: the first
-     * [logWorkingSet] call for a unilateral planned set commits a row and holds the cursor;
-     * the second call commits a second row (same [PlannedSetOut.id], the other side's actuals)
-     * and advances the cursor to the next entry in [flattenedPrescription].
+     * Resets to 0 whenever the cursor advances. Logging is a simple two-tap-per-unilateral-set:
+     * the first [logWorkingSet] call for a unilateral planned set commits sideIndex 0 and holds
+     * the cursor; the second call commits sideIndex 1 and advances the cursor to the next entry
+     * in [flattenedPrescription].
      */
     private var unilateralSideCount: Int = 0
 
@@ -171,14 +170,14 @@ class CaptureViewModel(
     val pendingReview: StateFlow<GroupReview?> = _pendingReview.asStateFlow()
 
     /**
-     * Actual load/reps/tap logged for each planned set, keyed by [PlannedSetOut.id] — see
-     * [LoggedSetActual]. Populated from persisted drafts in [load] (so a resumed session shows
-     * real actuals, not just targets) and kept current by [logWorkingSet] / [editLoggedSet] as
-     * sets are logged or corrected. A missing key means that planned set has no logged actual
-     * yet.
+     * Actual load/reps/tap logged for each planned-set side, keyed by
+     * ([PlannedSetOut.id], sideIndex) — see [LoggedSetActual]. Bilateral sets always use
+     * sideIndex 0. Populated from persisted drafts in [load] (so a resumed session shows real
+     * actuals, not just targets) and kept current by [logWorkingSet] / [editLoggedSet] as sets
+     * are logged or corrected. A missing key means that planned-set side has no logged actual yet.
      */
-    private val _loggedSetActuals = MutableStateFlow<Map<Int, LoggedSetActual>>(emptyMap())
-    val loggedSetActuals: StateFlow<Map<Int, LoggedSetActual>> = _loggedSetActuals.asStateFlow()
+    private val _loggedSetActuals = MutableStateFlow<Map<Pair<Int, Int>, LoggedSetActual>>(emptyMap())
+    val loggedSetActuals: StateFlow<Map<Pair<Int, Int>, LoggedSetActual>> = _loggedSetActuals.asStateFlow()
 
     /**
      * Seconds remaining on the current rest countdown; null when no countdown is running. The
@@ -338,11 +337,11 @@ class CaptureViewModel(
             ),
         )
         // Surface the actual just committed (see LoggedSetActual) — a logged set's card shows
-        // this instead of collapsing back to only the target. Keyed on plannedSetId; rows with
-        // no planned set (null) have no card to surface actuals on, so there's nothing to record.
+        // this instead of collapsing back to only the target. Keyed on plannedSetId + sideIndex;
+        // rows with no planned set (null) have no card to surface actuals on.
         if (plannedSetId != null) {
             _loggedSetActuals.value = _loggedSetActuals.value +
-                (plannedSetId to LoggedSetActual(actualLoad, actualReps, tap))
+                ((plannedSetId to sideIndex) to LoggedSetActual(actualLoad, actualReps, tap))
         }
         // Advance cursor ONLY after the commit — write-before-advance enforced.
         // Uses the globally-unique PlannedSetOut.id (not set_index, which resets per exercise).
@@ -398,15 +397,15 @@ class CaptureViewModel(
      * Field preservation: the upsert is a full-row REPLACE, but the edit UI only surfaces
      * load/reps/tap. Any other actual on the original row that the UI doesn't show (felt-peak on
      * an HT/band-composite set, and the aux plates/band/assisted-rep fields) is read back from
-     * the stored draft and carried into the corrected row, so correcting load/reps never nulls
-     * felt-peak. The original row's [SetLogDraft.sideIndex] is preserved too, so an edit replaces
-     * exactly that row rather than colliding with the other side of a unilateral set.
+     * the stored draft for the same [sideIndex] and carried into the corrected row, so correcting
+     * load/reps never nulls felt-peak or collides with the other side of a unilateral set.
      *
      * Same mandatory-tap gate as [logWorkingSet]: a working role with a null tap is rejected and
      * neither the write nor [loggedSetActuals] are updated.
      */
     suspend fun editLoggedSet(
         plannedSetId: Int,
+        sideIndex: Int = 0,
         movementId: Int,
         setIndex: Int,
         setRole: String,
@@ -416,14 +415,6 @@ class CaptureViewModel(
         isWarmup: Boolean = false,
         feltPeak: Double? = null,
     ) {
-        // Safety net for the UI gate (see isSetEditable in CaptureScreen): a unilateral set has
-        // TWO rows (sideIndex 0 and 1) under one plannedSetId, but this edit path is keyed by
-        // plannedSetId alone — existingLog returns side 1 (smallest draftId) and the write goes
-        // back with sideIndex 0, so editing the card (which displays side 2) would overwrite
-        // side 1's real data. Refuse rather than corrupt. Side-aware unilateral edit = follow-on:
-        // key loggedSetActuals / editingSetId / existingLog by (plannedSetId, sideIndex)
-        // end-to-end with per-side cards. Not built here.
-        if (plannedSetId in unilateralSetIds) return
         if (setRole in TAP_REQUIRED && tap == null) {
             _uiError.value = "Tap required before continuing"
             return
@@ -431,7 +422,7 @@ class CaptureViewModel(
         _uiError.value = null
         // Read the original row so unsurfaced actuals (felt-peak + aux fields) survive the
         // full-row replace; fall back to plain defaults if it somehow isn't there.
-        val existing = repo.existingLog(sessionId, plannedSetId)
+        val existing = repo.existingLogForSide(sessionId, plannedSetId, sideIndex)
         repo.logSet(
             SetLogDraft(
                 sessionId = sessionId,
@@ -449,11 +440,11 @@ class CaptureViewModel(
                 actualAssistedReps = existing?.actualAssistedReps,
                 actualPlates = existing?.actualPlates,
                 bandPairId = existing?.bandPairId,
-                sideIndex = existing?.sideIndex ?: 0,
+                sideIndex = sideIndex,
             ),
         )
         _loggedSetActuals.value = _loggedSetActuals.value +
-            (plannedSetId to LoggedSetActual(actualLoad, actualReps, tap))
+            ((plannedSetId to sideIndex) to LoggedSetActual(actualLoad, actualReps, tap))
     }
 
     /**

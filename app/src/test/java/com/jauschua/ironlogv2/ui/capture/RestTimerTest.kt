@@ -152,9 +152,9 @@ class RestTimerTest {
     @Test
     fun hardestTapForRound_returns_too_hard_if_any_too_hard() {
         val actuals = mapOf(
-            101 to LoggedSetActual(100.0, 5, "TOO_EASY"),
-            102 to LoggedSetActual(100.0, 5, "TOO_HARD"),
-            103 to LoggedSetActual(100.0, 5, "ON_TARGET")
+            (101 to 0) to LoggedSetActual(100.0, 5, "TOO_EASY"),
+            (102 to 0) to LoggedSetActual(100.0, 5, "TOO_HARD"),
+            (103 to 0) to LoggedSetActual(100.0, 5, "ON_TARGET")
         )
         assertEquals(FeedbackTap.TOO_HARD, hardestTapForRound(actuals, listOf(101, 102, 103)))
     }
@@ -162,7 +162,7 @@ class RestTimerTest {
     @Test
     fun hardestTapForRound_returns_on_target_if_missing_or_default() {
         val actuals = mapOf(
-            101 to LoggedSetActual(100.0, 5, "TOO_EASY")
+            (101 to 0) to LoggedSetActual(100.0, 5, "TOO_EASY")
             // 102 missing/unlogged
         )
         assertEquals(FeedbackTap.ON_TARGET, hardestTapForRound(actuals, listOf(101, 102)))
@@ -171,8 +171,8 @@ class RestTimerTest {
     @Test
     fun hardestTapForRound_returns_too_easy_if_all_too_easy() {
         val actuals = mapOf(
-            101 to LoggedSetActual(100.0, 5, "TOO_EASY"),
-            102 to LoggedSetActual(100.0, 5, "TOO_EASY")
+            (101 to 0) to LoggedSetActual(100.0, 5, "TOO_EASY"),
+            (102 to 0) to LoggedSetActual(100.0, 5, "TOO_EASY")
         )
         assertEquals(FeedbackTap.TOO_EASY, hardestTapForRound(actuals, listOf(101, 102)))
     }

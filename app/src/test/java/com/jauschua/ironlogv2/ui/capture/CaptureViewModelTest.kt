@@ -70,6 +70,9 @@ private class FakeGatedDao(
     }
     override suspend fun setLogForPlannedSet(sessionId: Int, plannedSetId: Int): SetLogDraft? =
         stored.filter { it.sessionId == sessionId && it.plannedSetId == plannedSetId }.minByOrNull { it.draftId }
+    override suspend fun setLogForPlannedSetSide(sessionId: Int, plannedSetId: Int, sideIndex: Int): SetLogDraft? =
+        stored.filter { it.sessionId == sessionId && it.plannedSetId == plannedSetId && it.sideIndex == sideIndex }
+            .minByOrNull { it.draftId }
     override suspend fun insertSurvey(d: SurveyDraft) {}
     override suspend fun insertNote(d: NoteDraft) {}
     override suspend fun setLogsForSession(sessionId: Int): List<SetLogDraft> =
@@ -470,7 +473,7 @@ class CaptureViewModelTest {
             plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
             actualLoad = 165.0, actualReps = 6, tap = "ON_TARGET",
         )
-        val logged = vm.loggedSetActuals.value[10]
+        val logged = vm.loggedSetActuals.value[10 to 0]
         assertEquals(165.0, logged?.actualLoad)
         assertEquals(6, logged?.actualReps)
         assertEquals("ON_TARGET", logged?.tap)
@@ -481,7 +484,7 @@ class CaptureViewModelTest {
             plannedSetId = 10, movementId = 3, setIndex = 0, setRole = "WORKING",
             actualLoad = 170.0, actualReps = 5, tap = "TOO_HARD",
         )
-        val corrected = vm.loggedSetActuals.value[10]
+        val corrected = vm.loggedSetActuals.value[10 to 0]
         assertEquals("edit updates the exposed actual", 170.0, corrected?.actualLoad)
         assertEquals("edit updates the exposed actual", 5, corrected?.actualReps)
         assertEquals("edit updates the exposed actual", "TOO_HARD", corrected?.tap)
@@ -525,7 +528,7 @@ class CaptureViewModelTest {
             actualLoad = 105.0, actualReps = 8, tap = null)
 
         assertNotNull(vm.uiError.value)
-        assertEquals("rejected edit must not overwrite the prior actual", 100.0, vm.loggedSetActuals.value[10]?.actualLoad)
+        assertEquals("rejected edit must not overwrite the prior actual", 100.0, vm.loggedSetActuals.value[10 to 0]?.actualLoad)
         assertEquals(100.0, db.captureDao().setLogsForSession(7).single().actualLoad)
     }
 
@@ -668,18 +671,15 @@ class CaptureViewModelTest {
         assertEquals("felt-peak preserved across the edit — not nulled", 255.0, row.feltPeak)
     }
 
-    // ── Fix B (review): unilateral edit is gated — editLoggedSet must not corrupt side 1 ─────
+    // ── Fix B (review): unilateral edit is side-aware — corrections stay isolated ───────────
 
     /**
      * A unilateral set logs TWO rows (side 1 + side 2) under one plannedSetId. The B edit path
-     * is keyed by plannedSetId alone, so `editLoggedSet` would read side 1 (smallest draftId) and
-     * overwrite it with the correction — corrupting side 1 while leaving side 2 untouched. The UI
-     * disables tap-to-edit for unilateral cards (isSetEditable); this asserts the matching VM
-     * safety net: editLoggedSet is a no-op for a unilateral plannedSetId — both side rows and
-     * their actuals are left exactly as logged.
+     * used to be keyed by plannedSetId alone; corrections must now target the requested
+     * sideIndex so editing one side cannot overwrite or clobber the other side's row.
      */
     @Test
-    fun editLoggedSet_is_a_noop_for_a_unilateral_planned_set() = runBlocking {
+    fun editing_one_side_of_a_unilateral_set_does_not_alter_the_other_side() = runBlocking {
         val (repo, db) = deps()
         val vm = CaptureViewModel(repo, sessionId = 7)
         val eUni = exercise(id = 1, idBase = 1, rounds = 1, unilateral = true) // planned_sets = [id=1]
@@ -693,15 +693,45 @@ class CaptureViewModelTest {
             actualLoad = 48.0, actualReps = 7, tap = "ON_TARGET")
         assertEquals(2, db.captureDao().setLogsForSession(7).size)
 
-        // Attempt to edit the unilateral card — must be refused (no write).
-        vm.editLoggedSet(plannedSetId = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+        val originalSide2 = vm.loggedSetActuals.value[1 to 1]
+
+        // Correct side 1 (sideIndex 0). Side 2 must remain exactly as logged.
+        vm.editLoggedSet(plannedSetId = 1, sideIndex = 0, movementId = 1, setIndex = 0, setRole = "WORKING",
             actualLoad = 999.0, actualReps = 1, tap = "TOO_HARD")
 
-        val rows = db.captureDao().setLogsForSession(7)
-        assertEquals("edit must not add/remove a row", 2, rows.size)
-        assertEquals("both original side loads intact — no corruption",
-            setOf(50.0, 48.0), rows.mapNotNull { it.actualLoad }.toSet())
-        assertNull("no 999 correction written", rows.firstOrNull { it.actualLoad == 999.0 })
+        assertEquals("side 1 reflects the correction", 999.0, vm.loggedSetActuals.value[1 to 0]?.actualLoad)
+        assertEquals("side 1 reflects the correction", 1, vm.loggedSetActuals.value[1 to 0]?.actualReps)
+        assertEquals("side 1 reflects the correction", "TOO_HARD", vm.loggedSetActuals.value[1 to 0]?.tap)
+        assertEquals("side 2 actual remains unchanged", originalSide2, vm.loggedSetActuals.value[1 to 1])
+
+        var rowsBySide = db.captureDao().setLogsForSession(7).associateBy { it.sideIndex }
+        assertEquals("edit must not add/remove a row", 2, rowsBySide.size)
+        assertEquals(999.0, rowsBySide[0]?.actualLoad)
+        assertEquals(1, rowsBySide[0]?.actualReps)
+        assertEquals("TOO_HARD", rowsBySide[0]?.feedbackTap)
+        assertEquals(48.0, rowsBySide[1]?.actualLoad)
+        assertEquals(7, rowsBySide[1]?.actualReps)
+        assertEquals("ON_TARGET", rowsBySide[1]?.feedbackTap)
+
+        val side1AfterFirstEdit = vm.loggedSetActuals.value[1 to 0]
+
+        // Correct side 2 (sideIndex 1). Side 1's corrected values must survive intact.
+        vm.editLoggedSet(plannedSetId = 1, sideIndex = 1, movementId = 1, setIndex = 0, setRole = "WORKING",
+            actualLoad = 44.0, actualReps = 9, tap = "TOO_EASY")
+
+        assertEquals("side 1 actual remains unchanged", side1AfterFirstEdit, vm.loggedSetActuals.value[1 to 0])
+        assertEquals("side 2 reflects the correction", 44.0, vm.loggedSetActuals.value[1 to 1]?.actualLoad)
+        assertEquals("side 2 reflects the correction", 9, vm.loggedSetActuals.value[1 to 1]?.actualReps)
+        assertEquals("side 2 reflects the correction", "TOO_EASY", vm.loggedSetActuals.value[1 to 1]?.tap)
+
+        rowsBySide = db.captureDao().setLogsForSession(7).associateBy { it.sideIndex }
+        assertEquals("edit must not add/remove a row", 2, rowsBySide.size)
+        assertEquals(999.0, rowsBySide[0]?.actualLoad)
+        assertEquals(1, rowsBySide[0]?.actualReps)
+        assertEquals("TOO_HARD", rowsBySide[0]?.feedbackTap)
+        assertEquals(44.0, rowsBySide[1]?.actualLoad)
+        assertEquals(9, rowsBySide[1]?.actualReps)
+        assertEquals("TOO_EASY", rowsBySide[1]?.feedbackTap)
     }
 
     // ── Resume-cursor fix: background-kill no longer looks like lost progress ───────────────
@@ -791,9 +821,9 @@ class CaptureViewModelTest {
 
         val actuals = vm.loggedSetActuals.value
         assertEquals(3, actuals.size)
-        assertEquals(100.0, actuals[10]?.actualLoad)
-        assertEquals(100.0, actuals[11]?.actualLoad)
-        assertEquals(100.0, actuals[12]?.actualLoad)
+        assertEquals(100.0, actuals[10 to 0]?.actualLoad)
+        assertEquals(100.0, actuals[11 to 0]?.actualLoad)
+        assertEquals(100.0, actuals[12 to 0]?.actualLoad)
     }
 
     /**

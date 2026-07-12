@@ -23,6 +23,9 @@ interface CaptureDao {
     @Query("SELECT * FROM setlog_draft WHERE sessionId = :sessionId AND plannedSetId = :plannedSetId ORDER BY draftId LIMIT 1")
     suspend fun setLogForPlannedSet(sessionId: Int, plannedSetId: Int): SetLogDraft?
 
+    @Query("SELECT * FROM setlog_draft WHERE sessionId = :sessionId AND plannedSetId = :plannedSetId AND sideIndex = :sideIndex LIMIT 1")
+    suspend fun setLogForPlannedSetSide(sessionId: Int, plannedSetId: Int, sideIndex: Int): SetLogDraft?
+
     /**
      * Idempotent write, keyed on (sessionId, plannedSetId, sideIndex): re-logging the same set+side
      * (double-tap, retry, or an explicit correction) replaces its prior row in place rather than

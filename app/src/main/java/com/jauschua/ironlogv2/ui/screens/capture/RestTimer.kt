@@ -44,24 +44,29 @@ internal fun restSeconds(baseRest: Int, tierLabel: String, tap: FeedbackTap, isG
  * [FeedbackTap.ON_TARGET] for aggregation (same default behavior as [CaptureViewModel.logWorkingSet]).
  */
 internal fun hardestTapForRound(
-    loggedActuals: Map<Int, LoggedSetActual>,
+    loggedActuals: Map<Pair<Int, Int>, LoggedSetActual>,
     roundPlannedSetIds: Iterable<Int>,
 ): FeedbackTap {
     var worst = FeedbackTap.TOO_EASY
     var foundAny = false
     for (id in roundPlannedSetIds) {
-        val tapStr = loggedActuals[id]?.tap
-        val tapEnum = if (tapStr != null) {
-            runCatching { FeedbackTap.valueOf(tapStr) }.getOrNull() ?: FeedbackTap.ON_TARGET
-        } else {
-            FeedbackTap.ON_TARGET
-        }
-        foundAny = true
-        if (tapEnum == FeedbackTap.TOO_HARD) {
-            return FeedbackTap.TOO_HARD
-        }
-        if (tapEnum == FeedbackTap.ON_TARGET) {
-            worst = FeedbackTap.ON_TARGET
+        val actualsForSet = loggedActuals
+            .filterKeys { (plannedSetId, _) -> plannedSetId == id }
+            .values
+        val tapStrings = if (actualsForSet.isEmpty()) listOf(null) else actualsForSet.map { it.tap }
+        for (tapStr in tapStrings) {
+            val tapEnum = if (tapStr != null) {
+                runCatching { FeedbackTap.valueOf(tapStr) }.getOrNull() ?: FeedbackTap.ON_TARGET
+            } else {
+                FeedbackTap.ON_TARGET
+            }
+            foundAny = true
+            if (tapEnum == FeedbackTap.TOO_HARD) {
+                return FeedbackTap.TOO_HARD
+            }
+            if (tapEnum == FeedbackTap.ON_TARGET) {
+                worst = FeedbackTap.ON_TARGET
+            }
         }
     }
     return if (foundAny) worst else FeedbackTap.ON_TARGET
