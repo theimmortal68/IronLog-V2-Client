@@ -48,7 +48,14 @@ import kotlinx.serialization.json.JsonObject
     val current_duration_seconds: Int? = null,
     val current_rope: String? = null,
 )
+@Serializable data class WarmupOut(
+    val movement_flow_seconds: Int,
+    val items: List<JsonObject> = emptyList(),
+    val activation_seconds: Int,
+    val items_activation: List<JsonObject> = emptyList(),
+)
 @Serializable data class SessionDetailResponse(
     val id: Int, val date: String, val day_role: String, val phase: String,
     val status: String, val groups: List<GroupOut>, val finisher: FinisherOut? = null,
+    val warmup: WarmupOut? = null,
 )

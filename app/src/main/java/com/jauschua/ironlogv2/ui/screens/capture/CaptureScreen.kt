@@ -54,12 +54,14 @@ import com.jauschua.ironlogv2.data.api.dto.FinisherOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
+import com.jauschua.ironlogv2.data.api.dto.WarmupOut
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 import com.jauschua.ironlogv2.ui.screens.review.displayMovementName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -252,6 +254,13 @@ private fun SessionContent(
             // item(...) call, in the exact order they're added, so `itemKeys.indexOf(key)`
             // matches that item's real LazyColumn index.
             itemKeys.clear()
+
+            session.warmup?.let { warmup ->
+                itemKeys.add("warmup")
+                item(key = "warmup") {
+                    WarmupSection(warmup)
+                }
+            }
 
             // Session header
             itemKeys.add("header")
@@ -493,6 +502,33 @@ private fun SessionContent(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun WarmupSection(warmup: WarmupOut) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(text = "Warmup", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = "Movement flow (~${warmup.movement_flow_seconds}s)",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        warmup.items.forEach { item ->
+            Text(text = warmupItemLine(item), style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            text = "Activation (~${warmup.activation_seconds}s)",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        warmup.items_activation.forEach { item ->
+            Text(text = warmupItemLine(item), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -836,6 +872,7 @@ private fun SetCard(
 //    stays a thin wrapper around testable functions) ────────────────────────────────────────
 
 private val finisherCoveredParamKeys = setOf("current_duration_seconds", "current_rope")
+private val warmupMetricKeys = listOf("reps", "reps_per_side", "seconds", "seconds_per_side", "hold_seconds")
 
 internal fun humanizeFinisherName(name: String): String =
     name.replace("_", " ")
@@ -844,6 +881,54 @@ internal fun humanizeFinisherName(name: String): String =
         .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
 
 private fun finisherParamValue(value: JsonElement): String = (value as? JsonPrimitive)?.content ?: value.toString()
+
+private fun warmupItemLine(item: JsonObject): String {
+    val name = item["name"]?.let(::finisherParamValue)?.let(::humanizeFinisherName) ?: "Warmup drill"
+    val usedKeys = mutableSetOf("name")
+    val parts = mutableListOf<String>()
+    val sets = item["sets"]?.let(::finisherParamValue)
+    val primaryMetricKey = warmupMetricKeys.firstOrNull { item[it] != null }
+
+    if (primaryMetricKey != null) {
+        val metric = finisherParamValue(item.getValue(primaryMetricKey))
+        val withSets = sets != null
+        parts += if (withSets) {
+            "$sets×${formatWarmupMetric(primaryMetricKey, metric, withSets = true)}"
+        } else {
+            formatWarmupMetric(primaryMetricKey, metric, withSets = false)
+        }
+        usedKeys += primaryMetricKey
+        if (withSets) usedKeys += "sets"
+    } else if (sets != null) {
+        parts += "$sets sets"
+        usedKeys += "sets"
+    }
+
+    warmupMetricKeys
+        .filter { key -> key != primaryMetricKey && item[key] != null }
+        .forEach { key ->
+            parts += formatWarmupMetric(key, finisherParamValue(item.getValue(key)), withSets = false)
+            usedKeys += key
+        }
+
+    item.entries
+        .filterNot { (key, _) -> key in usedKeys }
+        .forEach { (key, value) -> parts += "$key: ${finisherParamValue(value)}" }
+
+    return parts
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(separator = " · ", prefix = "$name — ")
+        ?: name
+}
+
+private fun formatWarmupMetric(key: String, value: String, withSets: Boolean): String = when (key) {
+    "reps" -> if (withSets) value else "$value reps"
+    "reps_per_side" -> if (withSets) "$value/side" else "$value reps/side"
+    "seconds" -> "${value}s"
+    "seconds_per_side" -> "${value}s/side"
+    "hold_seconds" -> if (withSets) "${value}s hold" else "hold ${value}s"
+    else -> value
+}
 
 /**
  * IDs of every [PlannedSetOut] that appears BEFORE the cursor in [flatSets] — rendered "✓" by
