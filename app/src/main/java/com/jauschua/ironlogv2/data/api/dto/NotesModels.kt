@@ -21,7 +21,7 @@ data class ProposalOut(
     val rep_low: Int? = null,
     val rep_high: Int? = null,
     val override_order: Double? = null,
-    val valid: Boolean = true,
+    val valid: Boolean = false,
     val validation_note: String? = null,
     val summary: String = "",
 )
