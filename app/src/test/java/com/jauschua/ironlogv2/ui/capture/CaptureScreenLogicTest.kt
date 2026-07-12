@@ -426,9 +426,7 @@ class CaptureScreenLogicTest {
         assertNull(tapResultLabel(null))
     }
 
-    // ── Fix B (review): unilateral logged cards are NOT tap-to-editable ────────────────────
-    // A unilateral card fronts two side-rows keyed only by plannedSetId here, so editing would
-    // overwrite the hidden side. Editing stays available for past BILATERAL sets only.
+    // Logged cards are tap-to-editable once they are past; unilateral cards save to side rows.
 
     @Test
     fun isSetEditable_true_for_past_bilateral_set() {
@@ -436,8 +434,8 @@ class CaptureScreenLogicTest {
     }
 
     @Test
-    fun isSetEditable_false_for_past_unilateral_set() {
-        assertEquals(false, isSetEditable(isPast = true, unilateral = true))
+    fun isSetEditable_true_for_past_unilateral_set() {
+        assertEquals(true, isSetEditable(isPast = true, unilateral = true))
     }
 
     @Test
