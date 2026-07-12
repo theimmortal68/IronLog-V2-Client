@@ -10,6 +10,23 @@ data class ProposedChange(
 )
 
 @Serializable
+data class ProposalOut(
+    val tier_exercise_id: Int,
+    val day_role: String,
+    val slot_label: String,
+    val override_type: String,
+    val override_movement_id: Int? = null,
+    val load_delta: Double? = null,
+    val load_absolute: Double? = null,
+    val rep_low: Int? = null,
+    val rep_high: Int? = null,
+    val override_order: Double? = null,
+    val valid: Boolean = false,
+    val validation_note: String? = null,
+    val summary: String = "",
+)
+
+@Serializable
 data class NoteReviewOut(
     val id: Int,
     val session_id: Int? = null,
@@ -24,6 +41,7 @@ data class NoteReviewOut(
     // kept here for forward-compat; `adjustmentKind` falls back to a keyword heuristic on
     // `proposed_change.action` when this is null.
     val action_type: String? = null,
+    val resolved_proposals: List<ProposalOut> = emptyList(),
 )
 
 /** One of the active program's exercise slots — the source-slot confirm/pick target for Apply.
@@ -52,6 +70,7 @@ data class ApplyOverrideRequest(
     val load_absolute: Double? = null,
     val rep_low: Int? = null,
     val rep_high: Int? = null,
+    val override_order: Double? = null,
 )
 
 /** One active (or just-reverted) slot override — generalized across MOVEMENT/LOAD/REPS — as

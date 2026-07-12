@@ -12,6 +12,7 @@ import com.jauschua.ironlogv2.data.api.dto.ApplyOverrideRequest
 import com.jauschua.ironlogv2.data.api.dto.MovementDto
 import com.jauschua.ironlogv2.data.api.dto.NoteReviewOut
 import com.jauschua.ironlogv2.data.api.dto.OverrideOut
+import com.jauschua.ironlogv2.data.api.dto.ProposalOut
 import com.jauschua.ironlogv2.data.api.dto.ProgramSlotOut
 import com.jauschua.ironlogv2.data.api.humanMessage
 import com.jauschua.ironlogv2.data.repo.LibraryRepo
@@ -29,11 +30,22 @@ import kotlinx.coroutines.launch
 data class ApplyWizardState(
     val note: NoteReviewOut,
     val kind: AdjustmentKind,
+    val proposals: List<ProposalOut> = emptyList(),
+    val selectedProposalIndex: Int? = null,
     val slots: List<ProgramSlotOut> = emptyList(),
     val selectedSlot: ProgramSlotOut? = null,
+    val selectedMovementId: Int? = null,
+    val loadDelta: Double? = null,
+    val loadAbsolute: Double? = null,
+    val repLow: Int? = null,
+    val repHigh: Int? = null,
+    val overrideOrder: Double? = null,
     val slotsLoading: Boolean = true,
     val submitting: Boolean = false,
-)
+) {
+    val selectedProposal: ProposalOut?
+        get() = selectedProposalIndex?.let { proposals.getOrNull(it) }
+}
 
 /** Review tab: unconfirmed change-proposals extracted from session notes. Confirm/dismiss only
  *  flip server-side flags. Apply opens an explicit confirm-wizard: the athlete confirms the
@@ -107,8 +119,9 @@ class ReviewViewModel(
      *  the program's slots and pre-selects the source slot by best subject match. SWAP additionally
      *  warms the movement picker. */
     fun openApply(note: NoteReviewOut) {
-        val kind = adjustmentKind(note.action_type, note.proposed_change?.action)
-        _wizard.value = ApplyWizardState(note = note, kind = kind, slotsLoading = true)
+        val initial = initialWizardState(note)
+        _wizard.value = initial
+        val kind = initial.kind
         if (kind == AdjustmentKind.SWAP) loadMovementsIfNeeded()
         viewModelScope.launch {
             notesRepo.programSlots(Routes.DEFAULT_PROGRAM_ID)
@@ -120,7 +133,11 @@ class ReviewViewModel(
                     // No fallback to the first slot: when the subject doesn't match any slot, leave
                     // it UNSELECTED so the athlete must explicitly pick (avoids silently applying to
                     // the wrong slot, e.g. bench). The wizard gates Apply on a selected slot.
-                    val selected = defaultSourceSlot(note.proposed_change?.movement, slots)
+                    val selected = if (current.proposals.isNotEmpty()) {
+                        current.selectedProposal?.let { slotForProposal(it, slots) }
+                    } else {
+                        defaultSourceSlot(note.proposed_change?.movement, slots)
+                    }
                     _wizard.value = current.copy(slots = slots, selectedSlot = selected, slotsLoading = false)
                 }
                 .onFailure { e ->
@@ -128,6 +145,14 @@ class ReviewViewModel(
                     _wizard.value = null
                 }
         }
+    }
+
+    fun selectProposal(index: Int) {
+        val current = _wizard.value ?: return
+        val proposal = current.proposals.getOrNull(index) ?: return
+        val next = current.copyFromProposal(index, proposal)
+        _wizard.value = next
+        if (next.kind == AdjustmentKind.SWAP) loadMovementsIfNeeded()
     }
 
     fun selectSlot(slot: ProgramSlotOut) {
@@ -165,9 +190,18 @@ class ReviewViewModel(
         )
     }
 
+    fun submitReorder(order: Double) = submitApply { slot ->
+        ApplyOverrideRequest(
+            tier_exercise_id = slot.tier_exercise_id,
+            override_type = "REORDER",
+            override_order = order,
+        )
+    }
+
     private fun submitApply(buildRequest: (ProgramSlotOut) -> ApplyOverrideRequest) {
         val w = _wizard.value ?: return
         val slot = w.selectedSlot ?: return
+        if (w.selectedProposal?.valid == false) return
         _wizard.value = w.copy(submitting = true)
         viewModelScope.launch {
             notesRepo.applyOverride(w.note.id, buildRequest(slot))
@@ -208,3 +242,60 @@ class ReviewViewModel(
         }
     }
 }
+
+internal fun initialWizardState(note: NoteReviewOut): ApplyWizardState {
+    val proposals = note.resolved_proposals
+    val selectedIndex = firstValidProposalIndex(proposals)
+    val proposal = selectedIndex?.let { proposals.getOrNull(it) }
+    return if (proposal != null) {
+        ApplyWizardState(
+            note = note,
+            kind = proposalAdjustmentKind(proposal),
+            proposals = proposals,
+            selectedProposalIndex = selectedIndex,
+            selectedSlot = slotFromProposal(proposal),
+            selectedMovementId = proposal.override_movement_id,
+            loadDelta = proposal.load_delta,
+            loadAbsolute = proposal.load_absolute,
+            repLow = proposal.rep_low,
+            repHigh = proposal.rep_high,
+            overrideOrder = proposal.override_order,
+            slotsLoading = true,
+        )
+    } else {
+        ApplyWizardState(
+            note = note,
+            kind = adjustmentKind(note.action_type, note.proposed_change?.action),
+            slotsLoading = true,
+        )
+    }
+}
+
+internal fun firstValidProposalIndex(proposals: List<ProposalOut>): Int? {
+    if (proposals.isEmpty()) return null
+    val validIndex = proposals.indexOfFirst { it.valid }
+    return if (validIndex >= 0) validIndex else 0
+}
+
+private fun ApplyWizardState.copyFromProposal(index: Int, proposal: ProposalOut): ApplyWizardState =
+    copy(
+        kind = proposalAdjustmentKind(proposal),
+        selectedProposalIndex = index,
+        selectedSlot = slotForProposal(proposal, slots),
+        selectedMovementId = proposal.override_movement_id,
+        loadDelta = proposal.load_delta,
+        loadAbsolute = proposal.load_absolute,
+        repLow = proposal.rep_low,
+        repHigh = proposal.rep_high,
+        overrideOrder = proposal.override_order,
+    )
+
+private fun slotForProposal(proposal: ProposalOut, slots: List<ProgramSlotOut>): ProgramSlotOut =
+    slots.firstOrNull { it.tier_exercise_id == proposal.tier_exercise_id } ?: slotFromProposal(proposal)
+
+private fun slotFromProposal(proposal: ProposalOut): ProgramSlotOut =
+    ProgramSlotOut(
+        tier_exercise_id = proposal.tier_exercise_id,
+        day_role = proposal.day_role,
+        tier_label = proposal.slot_label,
+    )
