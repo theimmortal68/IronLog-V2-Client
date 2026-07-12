@@ -3,6 +3,7 @@ package com.jauschua.ironlogv2.ui.screens.review
 
 import com.jauschua.ironlogv2.data.api.dto.MovementDto
 import com.jauschua.ironlogv2.data.api.dto.NoteReviewOut
+import com.jauschua.ironlogv2.data.api.dto.ProposalOut
 import com.jauschua.ironlogv2.data.api.dto.ProgramSlotOut
 
 /** Strips a trailing internal equipment/load-code bracket from a movement name for display,
@@ -24,7 +25,7 @@ fun proposedChangeLine(n: NoteReviewOut): String =
 fun isConfigChange(n: NoteReviewOut): Boolean = n.classification == "CONFIG_CHANGE"
 
 /** The kind of adjustment Apply's confirm-wizard should route to. */
-enum class AdjustmentKind { SWAP, LOAD, REPS, NONE }
+enum class AdjustmentKind { SWAP, LOAD, REPS, REORDER, NONE }
 
 private val SWAP_KEYWORDS = listOf("swap", "switch", "replace", "instead of", "change to", "sub in", "substitute")
 private val LOAD_KEYWORDS = listOf("light", "heavy", "load", "weight", "increase", "decrease", "heavier", "lighter")
@@ -41,8 +42,17 @@ fun adjustmentKind(actionType: String?, actionText: String? = null): AdjustmentK
     "SWAP" -> AdjustmentKind.SWAP
     "LOAD_INCREASE", "LOAD_DECREASE" -> AdjustmentKind.LOAD
     "REP_CHANGE" -> AdjustmentKind.REPS
+    "REORDER" -> AdjustmentKind.REORDER
     "OTHER" -> AdjustmentKind.NONE
     else -> keywordAdjustmentKind(actionText)
+}
+
+fun proposalAdjustmentKind(proposal: ProposalOut): AdjustmentKind = when (proposal.override_type) {
+    "MOVEMENT" -> AdjustmentKind.SWAP
+    "LOAD" -> AdjustmentKind.LOAD
+    "REPS" -> AdjustmentKind.REPS
+    "REORDER" -> AdjustmentKind.REORDER
+    else -> AdjustmentKind.NONE
 }
 
 private fun keywordAdjustmentKind(actionText: String?): AdjustmentKind {
@@ -66,7 +76,10 @@ private fun keywordAdjustmentKind(actionText: String?): AdjustmentKind {
  *  silently acknowledge a change nothing was actually applied for. Non-CONFIG_CHANGE notes
  *  (PROGRAMMING_REQUEST etc.) keep the plain Confirm/Dismiss path. */
 fun showApply(n: NoteReviewOut): Boolean =
-    isConfigChange(n) && adjustmentKind(n.action_type, n.proposed_change?.action) != AdjustmentKind.NONE
+    isConfigChange(n) && (
+        n.resolved_proposals.any { proposalAdjustmentKind(it) != AdjustmentKind.NONE } ||
+            adjustmentKind(n.action_type, n.proposed_change?.action) != AdjustmentKind.NONE
+        )
 
 fun showConfirm(n: NoteReviewOut): Boolean = !isConfigChange(n)
 

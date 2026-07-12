@@ -46,6 +46,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jauschua.ironlogv2.data.api.dto.MovementDto
 import com.jauschua.ironlogv2.data.api.dto.NoteReviewOut
 import com.jauschua.ironlogv2.data.api.dto.OverrideOut
+import com.jauschua.ironlogv2.data.api.dto.ProposalOut
 import com.jauschua.ironlogv2.data.api.dto.ProgramSlotOut
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
@@ -102,10 +103,12 @@ fun ReviewScreen(
         ApplyWizardDialog(
             wizard = w,
             movements = movements,
+            onSelectProposal = { vm.selectProposal(it) },
             onSelectSlot = { vm.selectSlot(it) },
             onSubmitSwap = { movementId -> vm.submitSwap(movementId) },
             onSubmitLoad = { delta, absolute -> vm.submitLoad(delta, absolute) },
             onSubmitReps = { low, high -> vm.submitReps(low, high) },
+            onSubmitReorder = { order -> vm.submitReorder(order) },
             onDismiss = { vm.closeWizard() },
         )
     }
@@ -245,19 +248,42 @@ private fun OverrideCard(
 private fun ApplyWizardDialog(
     wizard: ApplyWizardState,
     movements: List<MovementDto>,
+    onSelectProposal: (Int) -> Unit,
     onSelectSlot: (ProgramSlotOut) -> Unit,
     onSubmitSwap: (Int) -> Unit,
     onSubmitLoad: (Double?, Double?) -> Unit,
     onSubmitReps: (Int?, Int?) -> Unit,
+    onSubmitReorder: (Double) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var proposalPickerOpen by remember(wizard.note.id) { mutableStateOf(false) }
     var slotPickerOpen by remember(wizard.note.id) { mutableStateOf(false) }
     var movementPickerOpen by remember(wizard.note.id) { mutableStateOf(false) }
 
+    val selectedProposal = wizard.selectedProposal
+    val proposalInvalid = selectedProposal?.valid == false
+    val canSubmit = !wizard.submitting && !proposalInvalid
     val slotKey = wizard.selectedSlot?.tier_exercise_id
-    var loadAbsoluteText by remember(slotKey) { mutableStateOf("") }
-    var repLowText by remember(slotKey) { mutableStateOf(wizard.selectedSlot?.current_rep_low?.toString().orEmpty()) }
-    var repHighText by remember(slotKey) { mutableStateOf(wizard.selectedSlot?.current_rep_high?.toString().orEmpty()) }
+    val initialLoadAbsolute = wizard.loadAbsolute?.let(::formatNumber).orEmpty()
+    val initialRepLow = if (selectedProposal != null) {
+        wizard.repLow?.toString().orEmpty()
+    } else {
+        wizard.selectedSlot?.current_rep_low?.toString().orEmpty()
+    }
+    val initialRepHigh = if (selectedProposal != null) {
+        wizard.repHigh?.toString().orEmpty()
+    } else {
+        wizard.selectedSlot?.current_rep_high?.toString().orEmpty()
+    }
+    var loadAbsoluteText by remember(wizard.note.id, wizard.selectedProposalIndex, slotKey) {
+        mutableStateOf(initialLoadAbsolute)
+    }
+    var repLowText by remember(wizard.note.id, wizard.selectedProposalIndex, slotKey) {
+        mutableStateOf(initialRepLow)
+    }
+    var repHighText by remember(wizard.note.id, wizard.selectedProposalIndex, slotKey) {
+        mutableStateOf(initialRepHigh)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -277,6 +303,32 @@ private fun ApplyWizardDialog(
                     TextButton(onClick = { slotPickerOpen = true }) { Text("Change slot") }
                 }
 
+                selectedProposal?.let { proposal ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                proposalSummary(proposal),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (wizard.proposals.size > 1) {
+                                TextButton(onClick = { proposalPickerOpen = true }) { Text("Change") }
+                            }
+                        }
+                        if (proposalInvalid) {
+                            Text(
+                                proposal.validation_note ?: "This resolved proposal failed validation.",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+
                 when {
                     wizard.slotsLoading -> Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
@@ -287,13 +339,31 @@ private fun ApplyWizardDialog(
                     )
                     else -> when (wizard.kind) {
                         AdjustmentKind.SWAP -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            wizard.selectedMovementId?.let { movementId ->
+                                Button(
+                                    onClick = { onSubmitSwap(movementId) },
+                                    enabled = canSubmit,
+                                ) { Text("Apply") }
+                            }
                             Text("Replace with:", style = MaterialTheme.typography.bodyMedium)
-                            OutlinedButton(onClick = { movementPickerOpen = true }, enabled = !wizard.submitting) {
+                            OutlinedButton(onClick = { movementPickerOpen = true }, enabled = canSubmit) {
                                 Text("Pick movement")
                             }
                         }
                         AdjustmentKind.LOAD -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Adjust load:", style = MaterialTheme.typography.bodyMedium)
+                            if (wizard.loadDelta != null || wizard.loadAbsolute != null) {
+                                Button(
+                                    onClick = {
+                                        if (wizard.loadDelta != null) {
+                                            onSubmitLoad(wizard.loadDelta, null)
+                                        } else {
+                                            wizard.loadAbsolute?.let { onSubmitLoad(null, it) }
+                                        }
+                                    },
+                                    enabled = canSubmit,
+                                ) { Text("Apply ${loadAdjustmentLabel(wizard.loadDelta, wizard.loadAbsolute)}") }
+                            }
                             // Both directions: a LOAD_DECREASE note ("too heavy") lowers the load,
                             // LOAD_INCREASE raises it. The server accepts negative load_delta.
                             // FlowRow wraps to a second line on narrow (cover) displays instead of
@@ -302,7 +372,7 @@ private fun ApplyWizardDialog(
                                 listOf(-10.0, -5.0, 5.0, 10.0).forEach { delta ->
                                     OutlinedButton(
                                         onClick = { onSubmitLoad(delta, null) },
-                                        enabled = !wizard.submitting,
+                                        enabled = canSubmit,
                                     ) { Text("${if (delta >= 0) "+" else ""}${delta.toInt()}") }
                                 }
                             }
@@ -318,7 +388,7 @@ private fun ApplyWizardDialog(
                                 val absolute = loadAbsoluteText.toDoubleOrNull()
                                 Button(
                                     onClick = { absolute?.let { onSubmitLoad(null, it) } },
-                                    enabled = absolute != null && !wizard.submitting,
+                                    enabled = absolute != null && canSubmit,
                                 ) { Text("Set") }
                             }
                         }
@@ -346,7 +416,18 @@ private fun ApplyWizardDialog(
                             val high = repHighText.toIntOrNull()
                             Button(
                                 onClick = { onSubmitReps(low, high) },
-                                enabled = (low != null || high != null) && !wizard.submitting,
+                                enabled = (low != null || high != null) && canSubmit,
+                            ) { Text("Apply") }
+                        }
+                        AdjustmentKind.REORDER -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                selectedProposal?.summary?.takeIf { it.isNotBlank() } ?: "Reorder this slot.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            val order = wizard.overrideOrder
+                            Button(
+                                onClick = { order?.let(onSubmitReorder) },
+                                enabled = order != null && canSubmit,
                             ) { Text("Apply") }
                         }
                         AdjustmentKind.NONE -> Text(
@@ -358,6 +439,17 @@ private fun ApplyWizardDialog(
             }
         },
     )
+
+    if (proposalPickerOpen) {
+        ProposalPickerDialog(
+            wizard = wizard,
+            onPick = { index ->
+                onSelectProposal(index)
+                proposalPickerOpen = false
+            },
+            onDismiss = { proposalPickerOpen = false },
+        )
+    }
 
     if (slotPickerOpen) {
         SlotPickerDialog(
@@ -383,6 +475,14 @@ private fun ApplyWizardDialog(
     }
 }
 
+private fun proposalSummary(proposal: ProposalOut): String =
+    proposal.summary.ifBlank { "${proposal.day_role} · ${proposal.slot_label} · ${proposal.override_type}" }
+
+private fun loadAdjustmentLabel(delta: Double?, absolute: Double?): String =
+    delta?.let { "${if (it >= 0) "+" else ""}${formatNumber(it)} lb" }
+        ?: absolute?.let { "set ${formatNumber(it)} lb" }
+        ?: ""
+
 private fun slotLabel(slot: ProgramSlotOut?): String =
     slot?.let {
         listOfNotNull(it.day_role, it.tier_label, it.movement_name?.let(::displayMovementName)).joinToString(" · ")
@@ -390,6 +490,60 @@ private fun slotLabel(slot: ProgramSlotOut?): String =
 
 private fun applyWizardTitle(slot: ProgramSlotOut?): String =
     slot?.movement_name?.let { "Change ${displayMovementName(it)}" } ?: "Confirm slot"
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProposalPickerDialog(
+    wizard: ApplyWizardState,
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val candidates = wizard.proposals.withIndex()
+        .filter { it.index != wizard.selectedProposalIndex }
+        .toList()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pick resolved action") },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        text = {
+            if (candidates.isEmpty()) {
+                Text("No other resolved actions.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                    items(candidates, key = { it.index }) { candidate ->
+                        val proposal = candidate.value
+                        TextButton(onClick = { onPick(candidate.index) }, modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    proposalSummary(proposal),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = if (proposal.valid) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.error
+                                    },
+                                )
+                                if (!proposal.valid) {
+                                    Text(
+                                        proposal.validation_note ?: "Failed validation.",
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
 
 /** MOVEMENT: "Base → Target"; LOAD: "+10 lb" or "set 225 lb"; REPS: "5–8 reps". */
 private fun overrideSummaryLine(override: OverrideOut): String = when (override.override_type) {
