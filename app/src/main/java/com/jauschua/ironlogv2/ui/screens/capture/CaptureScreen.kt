@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.jauschua.ironlogv2.data.api.dto.FinisherOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
@@ -58,6 +59,8 @@ import com.jauschua.ironlogv2.ui.UiState
 import com.jauschua.ironlogv2.ui.screens.review.displayMovementName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -447,6 +450,13 @@ private fun SessionContent(
                 }
             }
 
+            session.finisher?.let { finisher ->
+                itemKeys.add("finisher")
+                item(key = "finisher") {
+                    FinisherSection(finisher)
+                }
+            }
+
             // UI error (tap required, etc.)
             uiError?.let { msg ->
                 itemKeys.add("error")
@@ -484,6 +494,45 @@ private fun SessionContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun FinisherSection(finisher: FinisherOut) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(text = "Finisher", style = MaterialTheme.typography.titleSmall)
+        Text(text = humanizeFinisherName(finisher.exercise_name), style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = "${finisher.duration_minutes} min EMOM",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        finisher.current_duration_seconds?.let { seconds ->
+            Text(
+                text = "${seconds}s work per minute",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        finisher.current_rope?.let { rope ->
+            Text(
+                text = humanizeFinisherName(rope),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        finisher.params.entries
+            .filterNot { (key, _) -> key in finisherCoveredParamKeys }
+            .forEach { (key, value) ->
+                Text(
+                    text = "$key: ${finisherParamValue(value)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
     }
 }
 
@@ -785,6 +834,16 @@ private fun SetCard(
 
 // ── Pure display/pre-fill logic (extracted so Compose UI, which can't be unit-tested here, ────
 //    stays a thin wrapper around testable functions) ────────────────────────────────────────
+
+private val finisherCoveredParamKeys = setOf("current_duration_seconds", "current_rope")
+
+internal fun humanizeFinisherName(name: String): String =
+    name.replace("_", " ")
+        .split(" ")
+        .filter { it.isNotBlank() }
+        .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+
+private fun finisherParamValue(value: JsonElement): String = (value as? JsonPrimitive)?.content ?: value.toString()
 
 /**
  * IDs of every [PlannedSetOut] that appears BEFORE the cursor in [flatSets] — rendered "✓" by
