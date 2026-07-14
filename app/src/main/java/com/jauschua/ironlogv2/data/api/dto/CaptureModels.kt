@@ -34,6 +34,7 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class ExerciseOut(
     val id: Int, val movement_id: Int, val movement_name: String, val order_index: Int,
     val scheme: String, val objective: String, val planned_sets: List<PlannedSetOut>,
+    val unit_hint: String? = null,
     val unilateral: Boolean = false,
 )
 @Serializable data class GroupOut(

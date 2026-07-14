@@ -64,6 +64,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
+/** The DTO's unit_hint marker for assisted/incline movements (assist value, not a weight). */
+private const val UNIT_ASSIST = "assist"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaptureScreen(
@@ -397,6 +400,7 @@ private fun SessionContent(
                                     SetCard(
                                         plannedSet = plannedSet,
                                         unilateral = exercise.unilateral,
+                                        unitHint = exercise.unit_hint,
                                         sideLabel = if (exercise.unilateral && isPast) "Side ${sideIndex + 1}" else null,
                                         isCurrent = isCurrent,
                                         isPast = isPast,
@@ -626,6 +630,7 @@ private fun GroupHeader(
 private fun SetCard(
     plannedSet: PlannedSetOut,
     unilateral: Boolean,
+    unitHint: String?,
     sideLabel: String? = null,
     isCurrent: Boolean,
     isPast: Boolean,
@@ -699,7 +704,7 @@ private fun SetCard(
             // "165lb × 6 reps · ✓ on target". This is the thing to surface; the target below is
             // now secondary reference, not the primary display.
             if (isPast && loggedActual != null) {
-                val actualLine = loggedActualLine(loggedActual.actualLoad, loggedActual.actualReps, loggedActual.tap)
+                val actualLine = loggedActualLine(loggedActual.actualLoad, loggedActual.actualReps, loggedActual.tap, unitHint)
                 if (actualLine.isNotEmpty()) {
                     Text(
                         text = "Actual: $actualLine",
@@ -712,7 +717,7 @@ private fun SetCard(
             // Target prescription — weight + reps (single number when fixed, range otherwise).
             // The phased pull-up AMRAP/assisted-pair widget is DEFERRED (server never populates
             // target_unassisted_reps/target_assisted_reps) — see repsTargetLabel's doc comment.
-            val weightTarget = plannedSet.target_load?.let { "${formatWeight(it)}lb" }
+            val weightTarget = plannedSet.target_load?.let { loadDisplayLabel(it, unitHint) }
             val repsTarget = repsTargetLabel(plannedSet).takeIf { it.isNotEmpty() }
             val target = listOfNotNull(weightTarget, repsTarget).joinToString(" ")
             if (target.isNotEmpty()) {
@@ -771,7 +776,7 @@ private fun SetCard(
                         OutlinedTextField(
                             value = setLoad,
                             onValueChange = onLoadChange,
-                            label = { Text("Load (lb)") },
+                            label = { Text(loadInputLabel(unitHint)) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             modifier = Modifier.weight(1f),
@@ -836,7 +841,7 @@ private fun SetCard(
                     OutlinedTextField(
                         value = editLoad,
                         onValueChange = onEditLoadChange,
-                        label = { Text("Load (lb)") },
+                        label = { Text(loadInputLabel(unitHint)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         modifier = Modifier.weight(1f),
@@ -1023,6 +1028,16 @@ internal fun repsInputLabel(plannedSet: PlannedSetOut): String {
 internal fun formatWeight(value: Double): String =
     if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
 
+/** Scalar load/assist target and actual display. Unknown/null unit hints remain pounds. */
+internal fun loadDisplayLabel(value: Double, unitHint: String?): String {
+    val suffix = if (unitHint == UNIT_ASSIST) "°" else "lb"
+    return "${formatWeight(value)}$suffix"
+}
+
+/** Scalar load/assist input label. Unknown/null unit hints remain pounds. */
+internal fun loadInputLabel(unitHint: String?): String =
+    if (unitHint == UNIT_ASSIST) "Assist (°)" else "Load (lb)"
+
 /** Weight input pre-fill — [targetLoad] as an editable default; blank when null
  * (needs-calibration: no floor to prefill). */
 internal fun prefillWeight(targetLoad: Double?): String = targetLoad?.let(::formatWeight) ?: ""
@@ -1054,8 +1069,8 @@ internal fun tapResultLabel(tap: String?): String? = when (tap) {
  * line that replaces/precedes the target once a set is past. Missing pieces (no load, no reps, no
  * tap — e.g. a warmup) are simply omitted, never rendered as `"null"`.
  */
-internal fun loggedActualLine(actualLoad: Double?, actualReps: Int?, tap: String?): String {
-    val loadPart = actualLoad?.let { "${formatWeight(it)}lb" }
+internal fun loggedActualLine(actualLoad: Double?, actualReps: Int?, tap: String?, unitHint: String? = null): String {
+    val loadPart = actualLoad?.let { loadDisplayLabel(it, unitHint) }
     val repsPart = actualReps?.let { "$it reps" }
     val loadReps = listOfNotNull(loadPart, repsPart).joinToString(" × ")
     return listOfNotNull(loadReps.takeIf { it.isNotEmpty() }, tapResultLabel(tap)).joinToString(" · ")
