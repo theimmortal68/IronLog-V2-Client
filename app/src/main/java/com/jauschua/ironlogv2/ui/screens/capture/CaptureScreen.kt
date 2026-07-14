@@ -2,6 +2,7 @@ package com.jauschua.ironlogv2.ui.screens.capture
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 import android.os.Build
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -159,6 +160,30 @@ private fun SessionContent(
     // logging ("log = accept or adjust").
     var setLoad by remember(currentPlannedSetId) {
         mutableStateOf(effectiveLoadPrefill(carriedLoadByMovement, currentExercise?.movement_id ?: -1, currentSet?.target_load))
+    }
+    // Spec 13: compute-once via remember(currentPlannedSetId) can evaluate against stale
+    // carriedLoadByMovement / currentExercise during complex multi-StateFlow recompositions or
+    // GIANT_SET round transitions. A LaunchedEffect keyed on the cursor and movement guarantees
+    // setLoad is resolved fresh against the latest carry map whenever the cursor lands on a new set,
+    // while keeping carriedLoadByMovement out of the key so live edits (onLoadChange) aren't overwritten.
+    LaunchedEffect(currentPlannedSetId, currentExercise?.movement_id) {
+        if (currentPlannedSetId != null) {
+            val resolved = effectiveLoadPrefill(
+                carriedLoadByMovement,
+                currentExercise?.movement_id ?: -1,
+                currentSet?.target_load,
+            )
+            // TEMP diagnostic logging (spec 13 follow-up) for the still-unconfirmed
+            // GIANT_SET carry-forward report — remove once the root cause is pinned
+            // down and the fix is confirmed on-device. Filter logcat on "CarryFwd".
+            Log.d(
+                "CarryFwd",
+                "cursor=$currentPlannedSetId movement=${currentExercise?.movement_id} " +
+                    "carried=${currentExercise?.movement_id?.let { carriedLoadByMovement[it] }} " +
+                    "target=${currentSet?.target_load} resolved=$resolved",
+            )
+            setLoad = resolved
+        }
     }
     var setReps by remember(currentPlannedSetId) { mutableStateOf(currentSet?.let(::prefillReps) ?: "") }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
@@ -414,6 +439,12 @@ private fun SessionContent(
                                             currentExercise?.let { ex ->
                                                 carriedLoadByMovement =
                                                     withCarriedLoad(carriedLoadByMovement, ex.movement_id, it.toDoubleOrNull())
+                                                // TEMP diagnostic logging (spec 13 follow-up), see the
+                                                // matching read-side log in the LaunchedEffect above.
+                                                Log.d(
+                                                    "CarryFwd",
+                                                    "WRITE cursor=$currentPlannedSetId movement=${ex.movement_id} value=$it",
+                                                )
                                             }
                                         },
                                         onRepsChange = { setReps = it },

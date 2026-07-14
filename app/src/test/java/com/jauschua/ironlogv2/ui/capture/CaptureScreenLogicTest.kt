@@ -514,4 +514,40 @@ class CaptureScreenLogicTest {
         val carried = mapOf(9 to 50.0) // carried for a DIFFERENT exercise
         assertEquals("170", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 170.0))
     }
+
+    // ── Spec 13: GIANT_SET round interleaving verification ──────────────────────────────
+
+    @Test
+    fun giant_set_round_interleaving_carries_forward_load_independently_per_movement() {
+        // Tracing exact athlete report: Pendlay Row (id=36), Incline DB Press (id=40), Knee Raise (id=42).
+        var carried = emptyMap<Int, Double>()
+
+        // Round 0 - Set 1 of each exercise
+        assertEquals("170", effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0))
+        carried = withCarriedLoad(carried, movementId = 36, newLoad = 175.0) // Athlete enters 175
+
+        assertEquals("60", effectiveLoadPrefill(carried, movementId = 40, targetLoad = 60.0))
+        carried = withCarriedLoad(carried, movementId = 40, newLoad = 65.0) // Athlete enters 65
+
+        assertEquals("", effectiveLoadPrefill(carried, movementId = 42, targetLoad = null))
+        // Athlete enters no weight for Knee Raise
+
+        // Round 1 - Set 2 of each exercise (cursor round-major interleaving)
+        // When LaunchedEffect fires upon cursor moving to Pendlay Row Round 1:
+        assertEquals(
+            "Pendlay Row R1 must pre-fill 175 despite Incline DB Press and Knee Raise interleaving",
+            "175",
+            effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0),
+        )
+        // If athlete accepts 175 on R1 without typing:
+        assertEquals("65", effectiveLoadPrefill(carried, movementId = 40, targetLoad = 60.0))
+
+        // Round 2 - Set 3 of Pendlay Row: verify clearing input field on R1 doesn't clear default for R2
+        carried = withCarriedLoad(carried, movementId = 36, newLoad = null) // Athlete cleared field on R1
+        assertEquals(
+            "Pendlay Row R2 must still pre-fill 175 after null input on R1",
+            "175",
+            effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0),
+        )
+    }
 }
