@@ -13,6 +13,8 @@ import com.jauschua.ironlogv2.ui.screens.capture.htObservedPeak
 import com.jauschua.ironlogv2.ui.screens.capture.htReconfigure
 import com.jauschua.ironlogv2.ui.screens.capture.htSetupLine
 import com.jauschua.ironlogv2.ui.screens.capture.isSetEditable
+import com.jauschua.ironlogv2.ui.screens.capture.loadDisplayLabel
+import com.jauschua.ironlogv2.ui.screens.capture.loadInputLabel
 import com.jauschua.ironlogv2.ui.screens.capture.loggedActualLine
 import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
@@ -50,6 +52,25 @@ class CaptureScreenLogicTest {
     @Test
     fun prefillWeight_blank_when_target_load_null_needs_calibration() {
         assertEquals("", prefillWeight(null))
+    }
+
+    @Test
+    fun loadDisplayLabel_uses_degrees_for_assist_unit_hint() {
+        assertEquals("25°", loadDisplayLabel(25.0, "assist"))
+        assertEquals("12.5°", loadDisplayLabel(12.5, "assist"))
+    }
+
+    @Test
+    fun loadDisplayLabel_uses_pounds_for_lb_or_missing_unit_hint() {
+        assertEquals("25lb", loadDisplayLabel(25.0, "lb"))
+        assertEquals("25lb", loadDisplayLabel(25.0, null))
+    }
+
+    @Test
+    fun loadInputLabel_uses_assist_label_only_for_assist_unit_hint() {
+        assertEquals("Assist (°)", loadInputLabel("assist"))
+        assertEquals("Load (lb)", loadInputLabel("lb"))
+        assertEquals("Load (lb)", loadInputLabel(null))
     }
 
     // ── reps display: single number vs range ─────────────────────────────────────────────
@@ -419,6 +440,17 @@ class CaptureScreenLogicTest {
         assertEquals("6 reps", loggedActualLine(null, 6, null))
         assertEquals("165lb", loggedActualLine(165.0, null, null))
         assertEquals("", loggedActualLine(null, null, null))
+    }
+
+    @Test
+    fun loggedActualLine_uses_degrees_for_assist_unit_hint() {
+        assertEquals("25° × 8 reps · ✓ on target", loggedActualLine(25.0, 8, "ON_TARGET", "assist"))
+    }
+
+    @Test
+    fun loggedActualLine_uses_pounds_for_lb_or_missing_unit_hint() {
+        assertEquals("25lb × 8 reps", loggedActualLine(25.0, 8, null, "lb"))
+        assertEquals("25lb × 8 reps", loggedActualLine(25.0, 8, null, null))
     }
 
     @Test
