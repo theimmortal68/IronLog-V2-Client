@@ -160,6 +160,20 @@ private fun SessionContent(
     var setLoad by remember(currentPlannedSetId) {
         mutableStateOf(effectiveLoadPrefill(carriedLoadByMovement, currentExercise?.movement_id ?: -1, currentSet?.target_load))
     }
+    // Spec 13: compute-once via remember(currentPlannedSetId) can evaluate against stale
+    // carriedLoadByMovement / currentExercise during complex multi-StateFlow recompositions or
+    // GIANT_SET round transitions. A LaunchedEffect keyed on the cursor and movement guarantees
+    // setLoad is resolved fresh against the latest carry map whenever the cursor lands on a new set,
+    // while keeping carriedLoadByMovement out of the key so live edits (onLoadChange) aren't overwritten.
+    LaunchedEffect(currentPlannedSetId, currentExercise?.movement_id) {
+        if (currentPlannedSetId != null) {
+            setLoad = effectiveLoadPrefill(
+                carriedLoadByMovement,
+                currentExercise?.movement_id ?: -1,
+                currentSet?.target_load,
+            )
+        }
+    }
     var setReps by remember(currentPlannedSetId) { mutableStateOf(currentSet?.let(::prefillReps) ?: "") }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
     var setFeltPeak by remember(currentPlannedSetId) { mutableStateOf("") }
