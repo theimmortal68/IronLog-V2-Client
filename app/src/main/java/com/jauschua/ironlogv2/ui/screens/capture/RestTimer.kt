@@ -105,12 +105,14 @@ internal fun restContextByPlannedSetId(groups: List<GroupOut>): Map<Int, SetRest
         for (e in g.exercises) {
             val ownsTrigger = shouldStartRest(g, e)
             val lastSetId = e.planned_sets.lastOrNull()?.id
-            for (ps in e.planned_sets) {
+            for ((index, ps) in e.planned_sets.withIndex()) {
+                val nextSet = e.planned_sets.getOrNull(index + 1)
+                val suppressWarmupToWarmupRest = ps.is_warmup && nextSet?.is_warmup == true
                 result[ps.id] = SetRestContext(
                     baseRestSeconds = baseRest,
                     tierLabel = g.label ?: "",
                     isGiantSet = g.group_type == "GIANT_SET",
-                    triggersRest = ownsTrigger && ps.id != lastSetId,
+                    triggersRest = ownsTrigger && ps.id != lastSetId && !suppressWarmupToWarmupRest,
                 )
             }
         }
