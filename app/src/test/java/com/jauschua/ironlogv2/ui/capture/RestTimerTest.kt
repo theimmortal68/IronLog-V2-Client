@@ -94,11 +94,17 @@ class RestTimerTest {
 
     // ── restContextByPlannedSetId: rest fires only when a further set follows (Change 1) ──
 
-    private fun exerciseWithSets(id: Int, setIds: List<Int>) = ExerciseOut(
+    private fun exerciseWithSets(id: Int, setIds: List<Int>, warmupSetIds: Set<Int> = emptySet()) = ExerciseOut(
         id = id, movement_id = id, movement_name = "ex$id", order_index = id,
         scheme = "STRAIGHT", objective = "",
         planned_sets = setIds.mapIndexed { i, sid ->
-            PlannedSetOut(id = sid, set_index = i, set_role = "WORKING", is_warmup = false)
+            val isWarmup = sid in warmupSetIds
+            PlannedSetOut(
+                id = sid,
+                set_index = i,
+                set_role = if (isWarmup) "WARMUP" else "WORKING",
+                is_warmup = isWarmup,
+            )
         },
     )
 
@@ -133,6 +139,49 @@ class RestTimerTest {
         assertTrue(ctx.getValue(301).triggersRest)
         assertTrue(ctx.getValue(302).triggersRest)
         assertFalse(ctx.getValue(303).triggersRest)
+    }
+
+    @Test
+    fun restContext_suppresses_rest_between_consecutive_warmup_sets_only() {
+        val e = exerciseWithSets(
+            id = 1,
+            setIds = listOf(101, 102, 103, 104, 105),
+            warmupSetIds = setOf(101, 102, 103),
+        )
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 5,
+            rest_seconds = 120, exercises = listOf(e),
+        )
+
+        val ctx = restContextByPlannedSetId(listOf(group))
+
+        assertFalse(ctx.getValue(101).triggersRest)
+        assertFalse(ctx.getValue(102).triggersRest)
+        assertTrue(ctx.getValue(103).triggersRest)
+        assertTrue(ctx.getValue(104).triggersRest)
+        assertFalse(ctx.getValue(105).triggersRest)
+    }
+
+    @Test
+    fun restContext_noWarmupSets_preserves_existing_trigger_values() {
+        val e = exerciseWithSets(1, listOf(101, 102, 103, 104))
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 4,
+            rest_seconds = 90, exercises = listOf(e),
+        )
+
+        val triggersBySetId = restContextByPlannedSetId(listOf(group))
+            .mapValues { (_, ctx) -> ctx.triggersRest }
+
+        assertEquals(
+            mapOf(
+                101 to true,
+                102 to true,
+                103 to true,
+                104 to false,
+            ),
+            triggersBySetId,
+        )
     }
 
     // ── formatRestTime: mm:ss display for the countdown label ───────────────────────────
