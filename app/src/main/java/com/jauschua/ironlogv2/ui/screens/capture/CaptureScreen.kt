@@ -1110,6 +1110,7 @@ internal fun finisherTimerMode(finisher: FinisherOut): FinisherTimerMode {
     val repsPerMinute = finisher.params.intParam(PARAM_TARGET_REPS_PER_MINUTE)
     val workSeconds = finisher.params.intParam(PARAM_WORK_SECONDS_PER_MINUTE)
     return when {
+        // If both timer params somehow arrive, rep-based mode deliberately wins.
         repsPerMinute != null -> FinisherTimerMode.RepBased(
             totalMinutes = finisher.duration_minutes,
             label = label,

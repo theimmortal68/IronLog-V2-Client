@@ -28,6 +28,7 @@ import com.jauschua.ironlogv2.ui.screens.capture.repsTargetLabel
 import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
 import com.jauschua.ironlogv2.ui.screens.capture.shoeTransition
 import com.jauschua.ironlogv2.ui.screens.capture.tapResultLabel
+import com.jauschua.ironlogv2.ui.screens.capture.warmupJumpRopeSeconds
 import com.jauschua.ironlogv2.ui.screens.capture.withCarriedLoad
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -77,6 +78,25 @@ class CaptureScreenLogicTest {
     }
 
     @Test
+    fun finisherTimerMode_rep_based_when_both_timer_params_present() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 8,
+            params = JsonObject(
+                mapOf(
+                    "target_reps_per_minute" to JsonPrimitive(80),
+                    "work_seconds_per_minute" to JsonPrimitive(35),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.RepBased(totalMinutes = 8, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
     fun finisherTimerMode_none_when_no_timer_param_present() {
         val finisher = FinisherOut(
             exercise_name = "burpees",
@@ -85,6 +105,86 @@ class CaptureScreenLogicTest {
         )
 
         assertEquals(FinisherTimerMode.None, finisherTimerMode(finisher))
+    }
+
+    @Test
+    fun finisherTimerMode_none_when_duration_minutes_is_not_positive() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 0,
+            params = JsonObject(
+                mapOf(
+                    "target_reps_per_minute" to JsonPrimitive(80),
+                    "work_seconds_per_minute" to JsonPrimitive(35),
+                ),
+            ),
+        )
+
+        assertEquals(FinisherTimerMode.None, finisherTimerMode(finisher))
+    }
+
+    // ── Spec 15: warmup jump-rope interval timer extraction ─────────────────────────────
+
+    @Test
+    fun warmupJumpRopeSeconds_returns_seconds_for_jump_rope_warmup() {
+        val item = JsonObject(
+            mapOf(
+                "name" to JsonPrimitive("jump rope footwork"),
+                "seconds" to JsonPrimitive(45),
+            ),
+        )
+
+        assertEquals(45, warmupJumpRopeSeconds(item))
+    }
+
+    @Test
+    fun warmupJumpRopeSeconds_null_when_jump_rope_seconds_not_positive() {
+        val negative = JsonObject(
+            mapOf(
+                "name" to JsonPrimitive("Jump Rope"),
+                "seconds" to JsonPrimitive(-10),
+            ),
+        )
+        val zero = JsonObject(
+            mapOf(
+                "name" to JsonPrimitive("Jump Rope"),
+                "seconds" to JsonPrimitive(0),
+            ),
+        )
+
+        assertNull(warmupJumpRopeSeconds(negative))
+        assertNull(warmupJumpRopeSeconds(zero))
+    }
+
+    @Test
+    fun warmupJumpRopeSeconds_null_when_jump_rope_seconds_missing() {
+        val item = JsonObject(mapOf("name" to JsonPrimitive("Jump Rope")))
+
+        assertNull(warmupJumpRopeSeconds(item))
+    }
+
+    @Test
+    fun warmupJumpRopeSeconds_null_when_jump_rope_seconds_non_integer() {
+        val item = JsonObject(
+            mapOf(
+                "name" to JsonPrimitive("Jump Rope"),
+                "seconds" to JsonPrimitive("thirty"),
+            ),
+        )
+
+        assertNull(warmupJumpRopeSeconds(item))
+    }
+
+    @Test
+    fun warmupJumpRopeSeconds_null_when_name_is_not_jump_rope() {
+        val item = JsonObject(
+            mapOf(
+                "name" to JsonPrimitive("worlds greatest stretch"),
+                "seconds" to JsonPrimitive(45),
+            ),
+        )
+
+        assertNull(warmupJumpRopeSeconds(item))
     }
 
     // ── weight pre-fill: target_load as an editable default ─────────────────────────────
