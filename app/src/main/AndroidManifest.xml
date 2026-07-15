@@ -25,6 +25,14 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps an in-progress workout rest countdown and audible completion cue active while the app is backgrounded." />
         </service>
+        <service
+            android:name=".service.IntervalTimerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps an in-progress warmup or finisher interval timer active while the app is backgrounded." />
+        </service>
 
         <activity
             android:name=".ui.MainActivity"
