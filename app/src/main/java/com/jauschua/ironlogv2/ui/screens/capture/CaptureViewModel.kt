@@ -14,8 +14,11 @@ import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.local.SetLogDraft
 import com.jauschua.ironlogv2.data.local.SurveyDraft
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
+import com.jauschua.ironlogv2.service.AndroidIntervalTimerController
 import com.jauschua.ironlogv2.service.AndroidRestTimerController
+import com.jauschua.ironlogv2.service.InMemoryIntervalTimerController
 import com.jauschua.ironlogv2.service.InMemoryRestTimerController
+import com.jauschua.ironlogv2.service.IntervalTimerController
 import com.jauschua.ironlogv2.service.RestTimerController
 import com.jauschua.ironlogv2.ui.UiState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -101,6 +104,7 @@ class CaptureViewModel(
     /** Mutable so [load] can set it from today's session; tests inject a known id directly. */
     private var sessionId: Int,
     private val restTimerController: RestTimerController = InMemoryRestTimerController(),
+    val intervalTimerController: IntervalTimerController = InMemoryIntervalTimerController(),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<SessionDetailResponse?>>(UiState.Loading)
@@ -184,6 +188,13 @@ class CaptureViewModel(
      * service/controller is the single countdown owner; this ViewModel only exposes its state.
      */
     val restRemainingSeconds: StateFlow<Int?> = restTimerController.remainingSeconds
+
+    /**
+     * Interval countdown/phase surfaced from [intervalTimerController]. Warmup jump-rope and
+     * finisher controls start/stop the same controller instance; this ViewModel does not tick.
+     */
+    val intervalRemainingSeconds: StateFlow<Int?> = intervalTimerController.remainingSeconds
+    val intervalPhaseLabel: StateFlow<String?> = intervalTimerController.phaseLabel
 
     /**
      * Load today's planned session.  Called from the screen's [LaunchedEffect] on entry.
@@ -533,6 +544,7 @@ class CaptureViewModel(
                     repo = app.container.captureRepo,
                     sessionId = 0,
                     restTimerController = AndroidRestTimerController(app.applicationContext),
+                    intervalTimerController = AndroidIntervalTimerController(app.applicationContext),
                 )
             }
         }
@@ -546,6 +558,7 @@ class CaptureViewModel(
                     repo = app.container.captureRepo,
                     sessionId = sessionId,
                     restTimerController = AndroidRestTimerController(app.applicationContext),
+                    intervalTimerController = AndroidIntervalTimerController(app.applicationContext),
                 )
             }
         }

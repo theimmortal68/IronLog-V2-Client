@@ -56,6 +56,7 @@ import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.api.dto.WarmupOut
+import com.jauschua.ironlogv2.service.IntervalTimerController
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 import com.jauschua.ironlogv2.ui.screens.review.displayMovementName
@@ -78,6 +79,8 @@ fun CaptureScreen(
     val submitResult by vm.submitResult.collectAsStateWithLifecycle()
     val currentPlannedSetId by vm.currentPlannedSetId.collectAsStateWithLifecycle()
     val restRemainingSeconds by vm.restRemainingSeconds.collectAsStateWithLifecycle()
+    val intervalRemainingSeconds by vm.intervalRemainingSeconds.collectAsStateWithLifecycle()
+    val intervalPhaseLabel by vm.intervalPhaseLabel.collectAsStateWithLifecycle()
     val pendingReview by vm.pendingReview.collectAsStateWithLifecycle()
     val loggedSetActuals by vm.loggedSetActuals.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -100,7 +103,8 @@ fun CaptureScreen(
                     } else {
                         SessionContent(
                             session, currentPlannedSetId, uiError, submitResult,
-                            restRemainingSeconds, loggedSetActuals, scope, vm,
+                            restRemainingSeconds, intervalRemainingSeconds, intervalPhaseLabel,
+                            loggedSetActuals, scope, vm, vm.intervalTimerController,
                         )
                     }
                 }
@@ -125,9 +129,12 @@ private fun SessionContent(
     uiError: String?,
     submitResult: String?,
     restRemainingSeconds: Int?,
+    intervalRemainingSeconds: Int?,
+    intervalPhaseLabel: String?,
     loggedSetActuals: Map<Pair<Int, Int>, LoggedSetActual>,
     scope: CoroutineScope,
     vm: CaptureViewModel,
+    intervalTimerController: IntervalTimerController,
 ) {
     // Flattened prescription for cursor-position queries (stable as long as session doesn't
     // change). MUST reuse the VM's flattenPrescription — GIANT_SET groups are round-major there
@@ -147,6 +154,14 @@ private fun SessionContent(
 
     // Session-level note, entered on the Finish screen; anchored to no movement (null) on submit.
     var sessionNote by remember(session.id) { mutableStateOf("") }
+
+    var activeIntervalKey by remember(session.id) { mutableStateOf<String?>(null) }
+    val intervalStatus = intervalRemainingSeconds?.let { remaining ->
+        InlineIntervalStatus(remainingSeconds = remaining, phaseLabel = intervalPhaseLabel)
+    }
+    LaunchedEffect(intervalRemainingSeconds) {
+        if (intervalRemainingSeconds == null) activeIntervalKey = null
+    }
 
     // Fix F — weight carries forward: last load entered per movement_id this session. When a
     // set's load is entered/changed, later UNLOGGED sets of the SAME exercise pre-fill to it
@@ -237,9 +252,10 @@ private fun SessionContent(
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
-    LaunchedEffect(restRemainingSeconds != null) {
+    val anyTimerRunning = restRemainingSeconds != null || intervalRemainingSeconds != null
+    LaunchedEffect(anyTimerRunning) {
         if (
-            restRemainingSeconds != null &&
+            anyTimerRunning &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
@@ -250,9 +266,9 @@ private fun SessionContent(
 
     // Keep the visible capture screen awake while resting; the service owns ticking and tones.
     val view = LocalView.current
-    DisposableEffect(restRemainingSeconds != null) {
+    DisposableEffect(anyTimerRunning) {
         val window = view.context.findActivity()?.window
-        if (restRemainingSeconds != null) {
+        if (anyTimerRunning) {
             window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -286,7 +302,19 @@ private fun SessionContent(
             session.warmup?.let { warmup ->
                 itemKeys.add("warmup")
                 item(key = "warmup") {
-                    WarmupSection(warmup)
+                    WarmupSection(
+                        warmup = warmup,
+                        activeIntervalKey = activeIntervalKey,
+                        intervalStatus = intervalStatus,
+                        onStartJumpRope = { key, seconds ->
+                            activeIntervalKey = key
+                            intervalTimerController.startCountdown(seconds, "Jump Rope")
+                        },
+                        onStopInterval = {
+                            intervalTimerController.stop()
+                            activeIntervalKey = null
+                        },
+                    )
                 }
             }
 
@@ -506,7 +534,31 @@ private fun SessionContent(
             session.finisher?.let { finisher ->
                 itemKeys.add("finisher")
                 item(key = "finisher") {
-                    FinisherSection(finisher)
+                    FinisherSection(
+                        finisher = finisher,
+                        active = activeIntervalKey == FINISHER_INTERVAL_KEY,
+                        intervalStatus = intervalStatus,
+                        onStartInterval = { mode ->
+                            activeIntervalKey = FINISHER_INTERVAL_KEY
+                            when (mode) {
+                                is FinisherTimerMode.RepBased -> {
+                                    intervalTimerController.startRepBasedIntervals(mode.totalMinutes, mode.label)
+                                }
+                                is FinisherTimerMode.TimeBased -> {
+                                    intervalTimerController.startTimeBasedIntervals(
+                                        mode.totalMinutes,
+                                        mode.workSeconds,
+                                        mode.label,
+                                    )
+                                }
+                                FinisherTimerMode.None -> Unit
+                            }
+                        },
+                        onStopInterval = {
+                            intervalTimerController.stop()
+                            activeIntervalKey = null
+                        },
+                    )
                 }
             }
 
@@ -551,7 +603,13 @@ private fun SessionContent(
 }
 
 @Composable
-private fun WarmupSection(warmup: WarmupOut) {
+private fun WarmupSection(
+    warmup: WarmupOut,
+    activeIntervalKey: String?,
+    intervalStatus: InlineIntervalStatus?,
+    onStartJumpRope: (String, Int) -> Unit,
+    onStopInterval: () -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -562,8 +620,15 @@ private fun WarmupSection(warmup: WarmupOut) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        warmup.items.forEach { item ->
-            Text(text = warmupItemLine(item), style = MaterialTheme.typography.bodySmall)
+        warmup.items.forEachIndexed { index, item ->
+            WarmupItemRow(
+                item = item,
+                intervalKey = "warmup-flow-$index",
+                activeIntervalKey = activeIntervalKey,
+                intervalStatus = intervalStatus,
+                onStartJumpRope = onStartJumpRope,
+                onStopInterval = onStopInterval,
+            )
         }
         Text(
             text = "Activation (~${warmup.activation_seconds}s)",
@@ -571,19 +636,81 @@ private fun WarmupSection(warmup: WarmupOut) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
-        warmup.items_activation.forEach { item ->
-            Text(text = warmupItemLine(item), style = MaterialTheme.typography.bodySmall)
+        warmup.items_activation.forEachIndexed { index, item ->
+            WarmupItemRow(
+                item = item,
+                intervalKey = "warmup-activation-$index",
+                activeIntervalKey = activeIntervalKey,
+                intervalStatus = intervalStatus,
+                onStartJumpRope = onStartJumpRope,
+                onStopInterval = onStopInterval,
+            )
         }
     }
 }
 
 @Composable
-private fun FinisherSection(finisher: FinisherOut) {
+private fun WarmupItemRow(
+    item: JsonObject,
+    intervalKey: String,
+    activeIntervalKey: String?,
+    intervalStatus: InlineIntervalStatus?,
+    onStartJumpRope: (String, Int) -> Unit,
+    onStopInterval: () -> Unit,
+) {
+    val seconds = warmupJumpRopeSeconds(item)
+    val active = activeIntervalKey == intervalKey
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = warmupItemLine(item),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            if (seconds != null && !active) {
+                TextButton(onClick = { onStartJumpRope(intervalKey, seconds) }) {
+                    Text("Start")
+                }
+            }
+        }
+        if (active && intervalStatus != null) {
+            InlineIntervalStatusBar(
+                status = intervalStatus,
+                onStop = onStopInterval,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FinisherSection(
+    finisher: FinisherOut,
+    active: Boolean,
+    intervalStatus: InlineIntervalStatus?,
+    onStartInterval: (FinisherTimerMode) -> Unit,
+    onStopInterval: () -> Unit,
+) {
+    val timerMode = finisherTimerMode(finisher)
     Column(
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(text = "Finisher", style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = "Finisher", style = MaterialTheme.typography.titleSmall)
+            if (timerMode != FinisherTimerMode.None && !active) {
+                TextButton(onClick = { onStartInterval(timerMode) }) {
+                    Text("Start")
+                }
+            }
+        }
         Text(text = humanizeFinisherName(finisher.exercise_name), style = MaterialTheme.typography.bodyLarge)
         Text(
             text = "${finisher.duration_minutes} min EMOM",
@@ -613,6 +740,40 @@ private fun FinisherSection(finisher: FinisherOut) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        if (active && intervalStatus != null) {
+            InlineIntervalStatusBar(
+                status = intervalStatus,
+                onStop = onStopInterval,
+            )
+        }
+    }
+}
+
+private data class InlineIntervalStatus(
+    val remainingSeconds: Int,
+    val phaseLabel: String?,
+)
+
+@Composable
+private fun InlineIntervalStatusBar(
+    status: InlineIntervalStatus,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val phase = status.phaseLabel?.takeIf { it.isNotBlank() }
+    Card(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = listOfNotNull("Interval", phase, formatRestTime(status.remainingSeconds))
+                    .joinToString(" · "),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            TextButton(onClick = onStop) { Text("Stop") }
+        }
     }
 }
 
@@ -918,8 +1079,18 @@ private fun SetCard(
 // ── Pure display/pre-fill logic (extracted so Compose UI, which can't be unit-tested here, ────
 //    stays a thin wrapper around testable functions) ────────────────────────────────────────
 
+private const val FINISHER_INTERVAL_KEY = "finisher"
+private const val PARAM_TARGET_REPS_PER_MINUTE = "target_reps_per_minute"
+private const val PARAM_WORK_SECONDS_PER_MINUTE = "work_seconds_per_minute"
+
 private val finisherCoveredParamKeys = setOf("current_duration_seconds", "current_rope")
 private val warmupMetricKeys = listOf("reps", "reps_per_side", "seconds", "seconds_per_side", "hold_seconds")
+
+internal sealed interface FinisherTimerMode {
+    data class RepBased(val totalMinutes: Int, val label: String) : FinisherTimerMode
+    data class TimeBased(val totalMinutes: Int, val workSeconds: Int, val label: String) : FinisherTimerMode
+    data object None : FinisherTimerMode
+}
 
 internal fun humanizeFinisherName(name: String): String =
     name.replace("_", " ")
@@ -928,6 +1099,36 @@ internal fun humanizeFinisherName(name: String): String =
         .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
 
 private fun finisherParamValue(value: JsonElement): String = (value as? JsonPrimitive)?.content ?: value.toString()
+
+private fun jsonIntValue(value: JsonElement?): Int? = (value as? JsonPrimitive)?.content?.toIntOrNull()
+
+private fun JsonObject.intParam(key: String): Int? = jsonIntValue(this[key])
+
+internal fun finisherTimerMode(finisher: FinisherOut): FinisherTimerMode {
+    if (finisher.duration_minutes <= 0) return FinisherTimerMode.None
+    val label = humanizeFinisherName(finisher.exercise_name)
+    val repsPerMinute = finisher.params.intParam(PARAM_TARGET_REPS_PER_MINUTE)
+    val workSeconds = finisher.params.intParam(PARAM_WORK_SECONDS_PER_MINUTE)
+    return when {
+        // If both timer params somehow arrive, rep-based mode deliberately wins.
+        repsPerMinute != null -> FinisherTimerMode.RepBased(
+            totalMinutes = finisher.duration_minutes,
+            label = label,
+        )
+        workSeconds != null -> FinisherTimerMode.TimeBased(
+            totalMinutes = finisher.duration_minutes,
+            workSeconds = workSeconds,
+            label = label,
+        )
+        else -> FinisherTimerMode.None
+    }
+}
+
+internal fun warmupJumpRopeSeconds(item: JsonObject): Int? {
+    val name = item["name"]?.let(::finisherParamValue)?.let(::humanizeFinisherName) ?: return null
+    if (!name.contains("Jump Rope", ignoreCase = true)) return null
+    return item.intParam("seconds")?.takeIf { it > 0 }
+}
 
 private fun warmupItemLine(item: JsonObject): String {
     val name = item["name"]?.let(::finisherParamValue)?.let(::humanizeFinisherName) ?: "Warmup drill"
