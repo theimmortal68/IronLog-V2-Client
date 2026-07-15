@@ -27,13 +27,13 @@ class IntervalTimerServiceLogicTest {
 
     @Test
     fun intervalTimerToneForTransition_maps_warning_ticks_and_done() {
-        assertEquals(RestTimerTone.WARNING, intervalTimerToneForTransition(previous = 16, current = 15))
-        assertEquals(RestTimerTone.TICK, intervalTimerToneForTransition(previous = 4, current = 3))
-        assertEquals(RestTimerTone.TICK, intervalTimerToneForTransition(previous = 3, current = 2))
-        assertEquals(RestTimerTone.TICK, intervalTimerToneForTransition(previous = 2, current = 1))
-        assertNull(intervalTimerToneForTransition(previous = 1, current = 0))
-        assertNull(intervalTimerToneForTransition(previous = 10, current = null))
-        assertNull(intervalTimerToneForTransition(previous = 30, current = 29))
+        assertEquals(RestTimerTone.WARNING, intervalTimerToneForTransition(current = 15))
+        assertEquals(RestTimerTone.TICK, intervalTimerToneForTransition(current = 3))
+        assertEquals(RestTimerTone.TICK, intervalTimerToneForTransition(current = 2))
+        assertEquals(RestTimerTone.TICK, intervalTimerToneForTransition(current = 1))
+        assertNull(intervalTimerToneForTransition(current = 0))
+        assertNull(intervalTimerToneForTransition(current = null))
+        assertNull(intervalTimerToneForTransition(current = 29))
     }
 
     @Test
@@ -127,6 +127,76 @@ class IntervalTimerServiceLogicTest {
         assertFalse(rest.isFinished)
 
         // Transition to done (since totalMinutes = 1)
+        val done = sequence.tick()
+        assertNull(done.remainingSeconds)
+        assertEquals(RestTimerTone.DONE, done.tone)
+        assertTrue(done.isFinished)
+    }
+
+    @Test
+    fun timeBasedSequence_loops_rounds_and_splits_work_rest() {
+        val sequence = IntervalTimerSequence(
+            IntervalTimerState.TimeBased(totalMinutes = 2, workSeconds = 30, label = "Tabata")
+        )
+
+        // Round 1 Work Phase (30s)
+        val initial = sequence.initialResult()
+        assertEquals(30, initial.remainingSeconds)
+        assertEquals("Work", initial.phaseLabel)
+        assertEquals(RestTimerTone.DONE, initial.tone)
+        assertFalse(initial.isFinished)
+
+        // Advance 29 seconds in Round 1 Work (remaining 1s)
+        var result = initial
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Work", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        // Transition to Round 1 Rest Phase (30s)
+        val round1Rest = sequence.tick()
+        assertEquals(30, round1Rest.remainingSeconds)
+        assertEquals("Rest", round1Rest.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round1Rest.tone)
+        assertFalse(round1Rest.isFinished)
+
+        // Advance 29 seconds in Round 1 Rest (remaining 1s)
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Rest", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        // Transition to Round 2 Work Phase (immediately after round-1's REST phase ends)
+        val round2Work = sequence.tick()
+        assertEquals(30, round2Work.remainingSeconds)
+        assertEquals("Work", round2Work.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round2Work.tone)
+        assertFalse(round2Work.isFinished)
+
+        // Advance 29 seconds in Round 2 Work (remaining 1s)
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Work", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        // Transition to Round 2 Rest Phase (30s)
+        val round2Rest = sequence.tick()
+        assertEquals(30, round2Rest.remainingSeconds)
+        assertEquals("Rest", round2Rest.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round2Rest.tone)
+        assertFalse(round2Rest.isFinished)
+
+        // Advance 29 seconds in Round 2 Rest (remaining 1s)
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Rest", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        // Final completion after Round 2 Rest completes
         val done = sequence.tick()
         assertNull(done.remainingSeconds)
         assertEquals(RestTimerTone.DONE, done.tone)

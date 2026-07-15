@@ -124,7 +124,7 @@ internal fun clampedIntervalWorkSeconds(workSeconds: Int): Int = workSeconds.coe
 internal fun intervalTimerRepBasedLabel(round: Int, totalMinutes: Int): String =
     "Minute $round of $totalMinutes"
 
-internal fun intervalTimerToneForTransition(previous: Int?, current: Int?): RestTimerTone? = when (current) {
+internal fun intervalTimerToneForTransition(current: Int?): RestTimerTone? = when (current) {
     15 -> RestTimerTone.WARNING
     3, 2, 1 -> RestTimerTone.TICK
     else -> null
@@ -198,11 +198,10 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
             )
         }
 
-        val previousRemaining = remainingInPhase
         remainingInPhase -= 1
 
         if (remainingInPhase > 0) {
-            val tone = intervalTimerToneForTransition(previousRemaining, remainingInPhase)
+            val tone = intervalTimerToneForTransition(remainingInPhase)
             return IntervalTickResult(
                 remainingSeconds = remainingInPhase,
                 phaseLabel = phaseLabel,
@@ -496,6 +495,7 @@ class IntervalTimerService : Service() {
         }
 
         fun stop(context: Context) {
+            if (_remainingSeconds.value == null) return
             val intent = Intent(context, IntervalTimerService::class.java).setAction(ACTION_STOP)
             context.startService(intent)
         }
