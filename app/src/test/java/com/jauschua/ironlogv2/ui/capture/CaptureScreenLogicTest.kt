@@ -2,10 +2,13 @@
 package com.jauschua.ironlogv2.ui.capture
 
 import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
+import com.jauschua.ironlogv2.data.api.dto.FinisherOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.capture.bandNames
 import com.jauschua.ironlogv2.ui.screens.capture.effectiveLoadPrefill
+import com.jauschua.ironlogv2.ui.screens.capture.FinisherTimerMode
+import com.jauschua.ironlogv2.ui.screens.capture.finisherTimerMode
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import com.jauschua.ironlogv2.ui.screens.capture.formatRepsTarget
 import com.jauschua.ironlogv2.ui.screens.capture.groupProgressHint
@@ -26,6 +29,8 @@ import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
 import com.jauschua.ironlogv2.ui.screens.capture.shoeTransition
 import com.jauschua.ironlogv2.ui.screens.capture.tapResultLabel
 import com.jauschua.ironlogv2.ui.screens.capture.withCarriedLoad
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -40,6 +45,47 @@ import org.junit.Test
  * is extracted into the plain functions under test, per the task brief.
  */
 class CaptureScreenLogicTest {
+
+    // ── Spec 15: finisher interval timer mode selection ─────────────────────────────────
+
+    @Test
+    fun finisherTimerMode_rep_based_when_target_reps_per_minute_present() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 8,
+            params = JsonObject(mapOf("target_reps_per_minute" to JsonPrimitive(80))),
+        )
+
+        assertEquals(
+            FinisherTimerMode.RepBased(totalMinutes = 8, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_time_based_when_work_seconds_per_minute_present() {
+        val finisher = FinisherOut(
+            exercise_name = "burpees",
+            duration_minutes = 10,
+            params = JsonObject(mapOf("work_seconds_per_minute" to JsonPrimitive(35))),
+        )
+
+        assertEquals(
+            FinisherTimerMode.TimeBased(totalMinutes = 10, workSeconds = 35, label = "Burpees"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_none_when_no_timer_param_present() {
+        val finisher = FinisherOut(
+            exercise_name = "burpees",
+            duration_minutes = 10,
+            params = JsonObject(emptyMap()),
+        )
+
+        assertEquals(FinisherTimerMode.None, finisherTimerMode(finisher))
+    }
 
     // ── weight pre-fill: target_load as an editable default ─────────────────────────────
 
