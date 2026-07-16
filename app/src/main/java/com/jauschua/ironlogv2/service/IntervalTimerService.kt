@@ -29,10 +29,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+private const val COUNTDOWN_LEAD_IN_LABEL = "Get Ready"
+
 interface IntervalTimerController {
     val remainingSeconds: StateFlow<Int?>
     val phaseLabel: StateFlow<String?>
-    fun startCountdown(seconds: Int, label: String)
+    fun startCountdown(seconds: Int, label: String, leadInSeconds: Int = 0)
     fun startRepBasedIntervals(totalMinutes: Int, label: String)
     fun startTimeBasedIntervals(totalMinutes: Int, workSeconds: Int, label: String)
     fun stop()
@@ -49,11 +51,17 @@ class InMemoryIntervalTimerController : IntervalTimerController {
     private val _phaseLabel = MutableStateFlow<String?>(null)
     override val phaseLabel: StateFlow<String?> = _phaseLabel.asStateFlow()
 
-    override fun startCountdown(seconds: Int, label: String) {
+    override fun startCountdown(seconds: Int, label: String, leadInSeconds: Int) {
         val duration = normalizedRestDurationSeconds(seconds)
         if (duration > 0) {
-            _remainingSeconds.value = duration
-            _phaseLabel.value = label
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
+            if (leadInDuration > 0) {
+                _remainingSeconds.value = leadInDuration
+                _phaseLabel.value = COUNTDOWN_LEAD_IN_LABEL
+            } else {
+                _remainingSeconds.value = duration
+                _phaseLabel.value = label
+            }
         } else {
             stop()
         }
@@ -89,8 +97,8 @@ class AndroidIntervalTimerController(context: Context) : IntervalTimerController
     override val remainingSeconds: StateFlow<Int?> = IntervalTimerService.remainingSeconds
     override val phaseLabel: StateFlow<String?> = IntervalTimerService.phaseLabel
 
-    override fun startCountdown(seconds: Int, label: String) {
-        IntervalTimerService.startCountdown(appContext, seconds, label)
+    override fun startCountdown(seconds: Int, label: String, leadInSeconds: Int) {
+        IntervalTimerService.startCountdown(appContext, seconds, label, leadInSeconds)
     }
 
     override fun startRepBasedIntervals(totalMinutes: Int, label: String) {
@@ -107,7 +115,7 @@ class AndroidIntervalTimerController(context: Context) : IntervalTimerController
 }
 
 internal sealed interface IntervalTimerState {
-    data class Countdown(val seconds: Int, val label: String) : IntervalTimerState
+    data class Countdown(val seconds: Int, val label: String, val leadInSeconds: Int = 0) : IntervalTimerState
     data class RepBased(val totalMinutes: Int, val label: String) : IntervalTimerState
     data class TimeBased(val totalMinutes: Int, val workSeconds: Int, val label: String) : IntervalTimerState
 }
@@ -133,14 +141,23 @@ internal fun intervalTimerToneForTransition(current: Int?): RestTimerTone? = whe
 internal class IntervalTimerSequence(private val state: IntervalTimerState) {
     private var currentRound: Int = 1
     private var isWorkPhase: Boolean = true
+    private var isLeadInPhase: Boolean = false
     private var remainingInPhase: Int = 0
     private var phaseLabel: String? = null
 
     init {
         when (state) {
             is IntervalTimerState.Countdown -> {
-                remainingInPhase = normalizedRestDurationSeconds(state.seconds)
-                phaseLabel = state.label
+                val duration = normalizedRestDurationSeconds(state.seconds)
+                val leadInDuration = state.leadInSeconds.coerceAtLeast(0)
+                if (duration > 0 && leadInDuration > 0) {
+                    isLeadInPhase = true
+                    remainingInPhase = leadInDuration
+                    phaseLabel = COUNTDOWN_LEAD_IN_LABEL
+                } else {
+                    remainingInPhase = duration
+                    phaseLabel = state.label
+                }
             }
             is IntervalTimerState.RepBased -> {
                 if (state.totalMinutes <= 0) {
@@ -201,7 +218,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
         remainingInPhase -= 1
 
         if (remainingInPhase > 0) {
-            val tone = intervalTimerToneForTransition(remainingInPhase)
+            val tone = if (isLeadInPhase) null else intervalTimerToneForTransition(remainingInPhase)
             return IntervalTickResult(
                 remainingSeconds = remainingInPhase,
                 phaseLabel = phaseLabel,
@@ -213,6 +230,17 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
         // remainingInPhase reached 0
         when (state) {
             is IntervalTimerState.Countdown -> {
+                if (isLeadInPhase) {
+                    isLeadInPhase = false
+                    remainingInPhase = normalizedRestDurationSeconds(state.seconds)
+                    phaseLabel = state.label
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
                 return IntervalTickResult(
                     remainingSeconds = null,
                     phaseLabel = null,
@@ -290,7 +318,8 @@ class IntervalTimerService : Service() {
             ACTION_START_COUNTDOWN -> {
                 val seconds = intent.getIntExtra(EXTRA_SECONDS, 0)
                 val label = intent.getStringExtra(EXTRA_LABEL) ?: ""
-                startSequence(IntervalTimerState.Countdown(seconds, label))
+                val leadInSeconds = intent.getIntExtra(EXTRA_LEAD_IN_SECONDS, 0).coerceAtLeast(0)
+                startSequence(IntervalTimerState.Countdown(seconds, label, leadInSeconds))
             }
             ACTION_START_REP_BASED -> {
                 val totalMinutes = intent.getIntExtra(EXTRA_TOTAL_MINUTES, 0)
@@ -457,6 +486,7 @@ class IntervalTimerService : Service() {
         private const val EXTRA_TOTAL_MINUTES = "totalMinutes"
         private const val EXTRA_WORK_SECONDS = "workSeconds"
         private const val EXTRA_LABEL = "label"
+        private const val EXTRA_LEAD_IN_SECONDS = "leadInSeconds"
         private const val DONE_TONE_TEARDOWN_DELAY_MS = 450L
 
         private val _remainingSeconds = MutableStateFlow<Int?>(null)
@@ -465,13 +495,15 @@ class IntervalTimerService : Service() {
         private val _phaseLabel = MutableStateFlow<String?>(null)
         val phaseLabel: StateFlow<String?> = _phaseLabel.asStateFlow()
 
-        fun startCountdown(context: Context, seconds: Int, label: String) {
+        fun startCountdown(context: Context, seconds: Int, label: String, leadInSeconds: Int = 0) {
             val duration = normalizedRestDurationSeconds(seconds)
             if (duration <= 0) return
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
             val intent = Intent(context, IntervalTimerService::class.java)
                 .setAction(ACTION_START_COUNTDOWN)
                 .putExtra(EXTRA_SECONDS, duration)
                 .putExtra(EXTRA_LABEL, label)
+                .putExtra(EXTRA_LEAD_IN_SECONDS, leadInDuration)
             ContextCompat.startForegroundService(context, intent)
         }
 
