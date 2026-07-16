@@ -98,12 +98,12 @@ private fun MovementsList(items: List<MovementDto>, onClick: (Int) -> Unit) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
                     .clickable { onClick(m.id) }
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(8.dp)) {
                     Text(m.name, style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.size(4.dp))
+                    Spacer(Modifier.size(2.dp))
                     val sub = buildString {
                         append(m.region.name)
                         append(" · ")
@@ -114,7 +114,7 @@ private fun MovementsList(items: List<MovementDto>, onClick: (Int) -> Unit) {
                     val floor = m.load_floor
                     val cap = m.cap
                     if (floor != null || cap != null) {
-                        Spacer(Modifier.size(4.dp))
+                        Spacer(Modifier.size(2.dp))
                         Text("floor=${floor ?: "—"}  cap=${cap ?: "—"}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
