@@ -100,7 +100,7 @@ private fun HasPlannedContent(session: SessionDetailResponse, onContinue: () -> 
     Centered {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Today: ${session.day_role}", style = MaterialTheme.typography.titleLarge)
             Button(onClick = onContinue) { Text("Continue workout") }
@@ -113,8 +113,8 @@ private fun NoSessionContent(days: List<String>, onGenerate: (String) -> Unit) {
     var selected by remember(days) { mutableStateOf(days.firstOrNull()) }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("Pick a day", style = MaterialTheme.typography.titleLarge)
         LazyColumn(
@@ -152,8 +152,8 @@ private fun PreviewContent(
     Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             item(key = "header") {
                 Text("Preview: ${preview.day_role}", style = MaterialTheme.typography.titleLarge)
@@ -163,7 +163,7 @@ private fun PreviewContent(
             }
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedButton(onClick = onRegenerate, modifier = Modifier.weight(1f)) {
@@ -180,8 +180,8 @@ private fun PreviewContent(
 private fun ReadOnlyGroupCard(gi: Int, group: GroupOut) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
                 text = group.label ?: group.group_type,
@@ -207,7 +207,7 @@ private fun ReadOnlyExerciseBlock(gi: Int, ei: Int, exercise: ExerciseOut) {
 @Composable
 private fun ReadOnlySetRow(gi: Int, ei: Int, si: Int, set: PlannedSetOut) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
