@@ -139,8 +139,8 @@ private fun ReviewBody(
         return
     }
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (notes.isEmpty()) {
             item(key = "empty-notes") {
@@ -156,7 +156,7 @@ private fun ReviewBody(
                 Text(
                     "Active adjustments",
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
             items(overrides, key = { "override-${it.id}" }) { ov ->
@@ -176,7 +176,7 @@ private fun ReviewCard(
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(note.classification, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -217,7 +217,7 @@ private fun OverrideCard(
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             val label = listOfNotNull(override.day_role, override.tier_label).joinToString(" · ")
@@ -293,7 +293,7 @@ private fun ApplyWizardDialog(
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
@@ -350,7 +350,7 @@ private fun ApplyWizardDialog(
                                 Text("Pick movement")
                             }
                         }
-                        AdjustmentKind.LOAD -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AdjustmentKind.LOAD -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Adjust load:", style = MaterialTheme.typography.bodyMedium)
                             if (wizard.loadDelta != null || wizard.loadAbsolute != null) {
                                 Button(
@@ -392,7 +392,7 @@ private fun ApplyWizardDialog(
                                 ) { Text("Set") }
                             }
                         }
-                        AdjustmentKind.REPS -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AdjustmentKind.REPS -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Set rep target:", style = MaterialTheme.typography.bodyMedium)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
@@ -419,7 +419,7 @@ private fun ApplyWizardDialog(
                                 enabled = (low != null || high != null) && canSubmit,
                             ) { Text("Apply") }
                         }
-                        AdjustmentKind.REORDER -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AdjustmentKind.REORDER -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
                                 selectedProposal?.summary?.takeIf { it.isNotBlank() } ?: "Reorder this slot.",
                                 style = MaterialTheme.typography.bodyMedium,
