@@ -49,8 +49,8 @@ fun GroupReviewSheet(
 
     ModalBottomSheet(onDismissRequest = onSkip, sheetState = sheetState) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
                 text = "Quick check — ${review.group.label ?: review.group.group_type}",
@@ -70,7 +70,7 @@ fun GroupReviewSheet(
                 value = note, onValueChange = { note = it },
                 label = { Text("Note (optional)") }, modifier = Modifier.fillMaxWidth(),
             )
-            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 OutlinedButton(onClick = onSkip) { Text("Skip") }
                 Button(onClick = { onSave(flags.toMap(), note.ifBlank { null }) }) { Text("Save") }
             }
