@@ -24,6 +24,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,8 +66,8 @@ fun MovementDetailScreen(
 @Composable
 private fun DetailBody(m: MovementDto, onTryAutoregulate: (Int) -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(m.name, style = MaterialTheme.typography.headlineSmall)
         Text(m.base_name, style = MaterialTheme.typography.bodyMedium)
@@ -95,7 +97,7 @@ private fun DetailBody(m: MovementDto, onTryAutoregulate: (Int) -> Unit) {
 
         Button(
             onClick = { onTryAutoregulate(m.id) },
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             enabled = m.progression_mode.name == "LADDER",
         ) {
             Text(
@@ -108,8 +110,17 @@ private fun DetailBody(m: MovementDto, onTryAutoregulate: (Int) -> Unit) {
 
 @Composable
 private fun Field(label: String, value: String) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.labelSmall)
-        Text(value, style = MaterialTheme.typography.bodyLarge)
-    }
+    val labelSpan = MaterialTheme.typography.labelSmall
+        .toSpanStyle()
+        .copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val valueSpan = MaterialTheme.typography.bodyMedium
+        .toSpanStyle()
+        .copy(color = MaterialTheme.colorScheme.onSurface)
+    Text(
+        text = buildAnnotatedString {
+            withStyle(labelSpan) { append("$label: ") }
+            withStyle(valueSpan) { append(value) }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
