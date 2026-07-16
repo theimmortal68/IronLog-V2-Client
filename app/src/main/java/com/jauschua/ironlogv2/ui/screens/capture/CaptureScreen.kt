@@ -46,7 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -291,8 +293,8 @@ private fun SessionContent(
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             // Reset the key->position tracker; the block below re-registers one entry per
             // item(...) call, in the exact order they're added, so `itemKeys.indexOf(key)`
@@ -634,7 +636,7 @@ private fun WarmupSection(
             text = "Activation (~${warmup.activation_seconds}s)",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
+            modifier = Modifier.padding(top = 2.dp),
         )
         warmup.items_activation.forEachIndexed { index, item ->
             WarmupItemRow(
@@ -695,8 +697,13 @@ private fun FinisherSection(
     onStopInterval: () -> Unit,
 ) {
     val timerMode = finisherTimerMode(finisher)
+    val metadataLine = listOfNotNull(
+        "${finisher.duration_minutes} min EMOM",
+        finisher.current_duration_seconds?.let { seconds -> "${seconds}s work per minute" },
+        finisher.current_rope?.let(::humanizeFinisherName),
+    ).joinToString(" · ")
     Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(
@@ -713,24 +720,10 @@ private fun FinisherSection(
         }
         Text(text = humanizeFinisherName(finisher.exercise_name), style = MaterialTheme.typography.bodyLarge)
         Text(
-            text = "${finisher.duration_minutes} min EMOM",
+            text = metadataLine,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        finisher.current_duration_seconds?.let { seconds ->
-            Text(
-                text = "${seconds}s work per minute",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        finisher.current_rope?.let { rope ->
-            Text(
-                text = humanizeFinisherName(rope),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
         finisher.params.entries
             .filterNot { (key, _) -> key in finisherCoveredParamKeys }
             .forEach { (key, value) ->
@@ -763,7 +756,7 @@ private fun InlineIntervalStatusBar(
     val phase = status.phaseLabel?.takeIf { it.isNotBlank() }
     Card(modifier = modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -793,7 +786,7 @@ private fun GroupHeader(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onToggle)
-            .padding(top = 8.dp),
+            .padding(top = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -863,12 +856,12 @@ private fun SetCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp)
+            .padding(start = 12.dp)
             .let { if (isSetEditable(isPast, unilateral)) it.clickable(onClick = onCardTap) else it },
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // Set header row
             Row(
@@ -912,39 +905,73 @@ private fun SetCard(
             val weightTarget = plannedSet.target_load?.let { loadDisplayLabel(it, unitHint) }
             val repsTarget = repsTargetLabel(plannedSet).takeIf { it.isNotEmpty() }
             val target = listOfNotNull(weightTarget, repsTarget).joinToString(" ")
-            if (target.isNotEmpty()) {
-                Text(
-                    text = "Target: $target",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            val rpe = rpeLabel(plannedSet.target_rpe)
+            when {
+                target.isNotEmpty() && rpe != null -> {
+                    val rpeSpan = MaterialTheme.typography.labelLarge
+                        .toSpanStyle()
+                        .copy(color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        text = buildAnnotatedString {
+                            append("Target: $target · ")
+                            withStyle(rpeSpan) { append(rpe) }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                target.isNotEmpty() -> {
+                    Text(
+                        text = "Target: $target",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                rpe != null -> {
+                    Text(
+                        text = rpe,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
 
             // HT (band-composite) setup line — plates + band names + target felt peak.
-            if (isHtSet) {
-                Text(
-                    text = htSetupLine(plannedSet.target_plates, plannedSet.band_config, plannedSet.target_felt_peak),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            val htSetup = if (isHtSet) {
+                htSetupLine(plannedSet.target_plates, plannedSet.band_config, plannedSet.target_felt_peak)
+            } else {
+                null
             }
-
-            // RPE — shown prominently; for fixed-rep lifts this is the real progression signal.
-            rpeLabel(plannedSet.target_rpe)?.let { rpe ->
-                Text(
-                    text = rpe,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-
-            // Unilateral affordance — label the set "per side" clearly.
-            perSideLabel(unilateral)?.let { label ->
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.tertiary,
-                )
+            val sideHint = perSideLabel(unilateral)
+            when {
+                htSetup != null && sideHint != null -> {
+                    val sideSpan = MaterialTheme.typography.labelSmall
+                        .toSpanStyle()
+                        .copy(color = MaterialTheme.colorScheme.tertiary)
+                    Text(
+                        text = buildAnnotatedString {
+                            append(htSetup)
+                            append(" · ")
+                            withStyle(sideSpan) { append(sideHint) }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                htSetup != null -> {
+                    Text(
+                        text = htSetup,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                sideHint != null -> {
+                    Text(
+                        text = sideHint,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
             }
 
             // Input controls for the current set only
