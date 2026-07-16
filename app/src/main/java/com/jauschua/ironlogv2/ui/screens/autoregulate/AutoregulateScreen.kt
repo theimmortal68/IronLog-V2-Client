@@ -71,7 +71,7 @@ private fun Form(ui: AutoregUi, vm: AutoregulateViewModel) {
     val selected: MovementDto? = ui.selectedId?.let { id -> ui.movements.firstOrNull { it.id == id } }
     var expanded by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
         // Movement picker (LADDER-only)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
@@ -125,7 +125,7 @@ private fun Form(ui: AutoregUi, vm: AutoregulateViewModel) {
         Card {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                modifier = Modifier.padding(8.dp).fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text("Tier: ${ui.tier}  (0..$tierMax)", style = MaterialTheme.typography.bodyLarge)
@@ -161,7 +161,7 @@ private fun Form(ui: AutoregUi, vm: AutoregulateViewModel) {
                 else          -> "unchanged"
             }
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(10.dp)) {
                     Text("Suggested next load", style = MaterialTheme.typography.labelMedium)
                     Text("${fmt(res.suggested_load)} lb", style = MaterialTheme.typography.headlineMedium)
                     Text("Δ $deltaText", style = MaterialTheme.typography.bodyMedium)
