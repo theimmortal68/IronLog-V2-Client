@@ -103,8 +103,8 @@ private fun WizardContent(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        contentPadding = PaddingValues(vertical = 8.dp),
     ) {
         // Header: program name + the server's live "N left" counter.
         item(key = "header") {
@@ -138,7 +138,7 @@ private fun WizardContent(
                         text = "${ui.freshMovements.size} ready",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(12.dp),
+                        modifier = Modifier.padding(8.dp),
                     )
                 }
             }
@@ -191,8 +191,8 @@ private fun ActionMovementCard(
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
