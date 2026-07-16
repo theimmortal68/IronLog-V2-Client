@@ -77,8 +77,8 @@ private fun DetailBody(session: LoggedSetsResponse) {
     val groups = groupLogsByMovement(session.logs)
     val sessionNote = sessionNoteText(session.notes)
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         item(key = "header") {
             Text(
@@ -116,7 +116,7 @@ private fun MovementCard(
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(
