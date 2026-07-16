@@ -310,7 +310,7 @@ private fun SessionContent(
                         intervalStatus = intervalStatus,
                         onStartJumpRope = { key, seconds ->
                             activeIntervalKey = key
-                            intervalTimerController.startCountdown(seconds, "Jump Rope")
+                            intervalTimerController.startCountdown(seconds, "Jump Rope", leadInSeconds = 5)
                         },
                         onStopInterval = {
                             intervalTimerController.stop()

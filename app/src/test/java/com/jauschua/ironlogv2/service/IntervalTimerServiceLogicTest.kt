@@ -39,7 +39,7 @@ class IntervalTimerServiceLogicTest {
     @Test
     fun countdownSequence_counts_down_to_completion() {
         val sequence = IntervalTimerSequence(IntervalTimerState.Countdown(seconds = 3, label = "Jump Rope"))
-        
+
         val initial = sequence.initialResult()
         assertEquals(3, initial.remainingSeconds)
         assertEquals("Jump Rope", initial.phaseLabel)
@@ -58,6 +58,78 @@ class IntervalTimerServiceLogicTest {
 
         val tick3 = sequence.tick()
         assertNull(tick3.remainingSeconds)
+        assertEquals(RestTimerTone.DONE, tick3.tone)
+        assertTrue(tick3.isFinished)
+    }
+
+    @Test
+    fun countdownSequence_withLeadIn_transitions_to_main_countdown() {
+        val sequence = IntervalTimerSequence(
+            IntervalTimerState.Countdown(seconds = 90, label = "Jump Rope", leadInSeconds = 5)
+        )
+
+        val initial = sequence.initialResult()
+        assertEquals(5, initial.remainingSeconds)
+        assertEquals("Get Ready", initial.phaseLabel)
+        assertNull(initial.tone)
+        assertFalse(initial.isFinished)
+
+        var result = initial
+        listOf(4, 3, 2, 1).forEach { remaining ->
+            result = sequence.tick()
+            assertEquals(remaining, result.remainingSeconds)
+            assertEquals("Get Ready", result.phaseLabel)
+            assertNull(result.tone)
+            assertFalse(result.isFinished)
+        }
+
+        val main = sequence.tick()
+        assertEquals(90, main.remainingSeconds)
+        assertEquals("Jump Rope", main.phaseLabel)
+        assertEquals(RestTimerTone.DONE, main.tone)
+        assertFalse(main.isFinished)
+
+        result = main
+        repeat(89) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Jump Rope", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val done = sequence.tick()
+        assertNull(done.remainingSeconds)
+        assertNull(done.phaseLabel)
+        assertEquals(RestTimerTone.DONE, done.tone)
+        assertTrue(done.isFinished)
+    }
+
+    @Test
+    fun countdownSequence_negativeLeadIn_behaves_like_plain_countdown() {
+        val sequence = IntervalTimerSequence(
+            IntervalTimerState.Countdown(seconds = 3, label = "Jump Rope", leadInSeconds = -5)
+        )
+
+        val initial = sequence.initialResult()
+        assertEquals(3, initial.remainingSeconds)
+        assertEquals("Jump Rope", initial.phaseLabel)
+        assertNull(initial.tone)
+        assertFalse(initial.isFinished)
+
+        val tick1 = sequence.tick()
+        assertEquals(2, tick1.remainingSeconds)
+        assertEquals("Jump Rope", tick1.phaseLabel)
+        assertEquals(RestTimerTone.TICK, tick1.tone)
+        assertFalse(tick1.isFinished)
+
+        val tick2 = sequence.tick()
+        assertEquals(1, tick2.remainingSeconds)
+        assertEquals("Jump Rope", tick2.phaseLabel)
+        assertEquals(RestTimerTone.TICK, tick2.tone)
+        assertFalse(tick2.isFinished)
+
+        val tick3 = sequence.tick()
+        assertNull(tick3.remainingSeconds)
+        assertNull(tick3.phaseLabel)
         assertEquals(RestTimerTone.DONE, tick3.tone)
         assertTrue(tick3.isFinished)
     }
