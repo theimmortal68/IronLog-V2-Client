@@ -59,9 +59,9 @@ private fun BandsList(bands: List<BandPairDto>) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
+                Column(modifier = Modifier.padding(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(b.label, style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.size(8.dp))
@@ -77,7 +77,7 @@ private fun BandsList(bands: List<BandPairDto>) {
                         )
                     }
                     Spacer(Modifier.size(2.dp))
-                    Text("bottom ${b.bottom_lb} lb  ·  peak ${b.peak_lb} lb", style = MaterialTheme.typography.bodyMedium)
+                    Text("bottom ${b.bottom_lb} lb  ·  peak ${b.peak_lb} lb", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
