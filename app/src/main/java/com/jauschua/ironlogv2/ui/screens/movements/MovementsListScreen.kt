@@ -98,25 +98,21 @@ private fun MovementsList(items: List<MovementDto>, onClick: (Int) -> Unit) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
                     .clickable { onClick(m.id) }
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Text(m.name, style = MaterialTheme.typography.titleLarge)
+                Column(modifier = Modifier.padding(6.dp)) {
+                    Text(m.name, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.size(2.dp))
-                    val sub = buildString {
-                        append(m.region.name)
-                        append(" · ")
-                        append(m.lift_category.name)
-                        if (m.is_primary) append(" · primary")
-                    }
-                    Text(sub, style = MaterialTheme.typography.bodyMedium)
                     val floor = m.load_floor
                     val cap = m.cap
-                    if (floor != null || cap != null) {
-                        Spacer(Modifier.size(2.dp))
-                        Text("floor=${floor ?: "—"}  cap=${cap ?: "—"}", style = MaterialTheme.typography.bodySmall)
-                    }
+                    val summary = listOfNotNull(
+                        m.region.name,
+                        m.lift_category.name,
+                        if (m.is_primary) "primary" else null,
+                        if (floor != null || cap != null) "floor=${floor ?: "—"} cap=${cap ?: "—"}" else null,
+                    ).joinToString(" · ")
+                    Text(summary, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

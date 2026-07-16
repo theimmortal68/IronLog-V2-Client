@@ -74,7 +74,7 @@ private fun SessionListBody(sessions: List<SessionSummary>, onOpen: (Int) -> Uni
         return
     }
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(12.dp),
+        modifier = Modifier.fillMaxSize().padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         items(sessions, key = { it.id }) { session ->
@@ -89,10 +89,10 @@ private fun SessionRow(session: SessionSummary, onOpen: (Int) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         onClick = { onOpen(session.id) },
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(6.dp)) {
             Text(
                 text = "${session.date} · ${session.day_role}",
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
     }
