@@ -544,13 +544,18 @@ private fun SessionContent(
                             activeIntervalKey = FINISHER_INTERVAL_KEY
                             when (mode) {
                                 is FinisherTimerMode.RepBased -> {
-                                    intervalTimerController.startRepBasedIntervals(mode.totalMinutes, mode.label)
+                                    intervalTimerController.startRepBasedIntervals(
+                                        mode.totalMinutes,
+                                        mode.label,
+                                        leadInSeconds = 5,
+                                    )
                                 }
                                 is FinisherTimerMode.TimeBased -> {
                                     intervalTimerController.startTimeBasedIntervals(
                                         mode.totalMinutes,
                                         mode.workSeconds,
                                         mode.label,
+                                        leadInSeconds = 5,
                                     )
                                 }
                                 FinisherTimerMode.None -> Unit

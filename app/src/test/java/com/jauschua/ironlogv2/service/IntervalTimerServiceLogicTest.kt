@@ -172,6 +172,97 @@ class IntervalTimerServiceLogicTest {
     }
 
     @Test
+    fun repBasedSequence_withLeadIn_transitions_to_first_minute_then_completes() {
+        val sequence = IntervalTimerSequence(
+            IntervalTimerState.RepBased(totalMinutes = 3, label = "EMOM", leadInSeconds = 5)
+        )
+
+        val initial = sequence.initialResult()
+        assertEquals(5, initial.remainingSeconds)
+        assertEquals("Get Ready", initial.phaseLabel)
+        assertNull(initial.tone)
+        assertFalse(initial.isFinished)
+
+        var result = initial
+        listOf(4, 3, 2, 1).forEach { remaining ->
+            result = sequence.tick()
+            assertEquals(remaining, result.remainingSeconds)
+            assertEquals("Get Ready", result.phaseLabel)
+            assertNull(result.tone)
+            assertFalse(result.isFinished)
+        }
+
+        val round1 = sequence.tick()
+        assertEquals(60, round1.remainingSeconds)
+        assertEquals("Minute 1 of 3", round1.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round1.tone)
+        assertFalse(round1.isFinished)
+
+        result = round1
+        repeat(59) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Minute 1 of 3", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val round2 = sequence.tick()
+        assertEquals(60, round2.remainingSeconds)
+        assertEquals("Minute 2 of 3", round2.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round2.tone)
+        assertFalse(round2.isFinished)
+
+        result = round2
+        repeat(59) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Minute 2 of 3", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val round3 = sequence.tick()
+        assertEquals(60, round3.remainingSeconds)
+        assertEquals("Minute 3 of 3", round3.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round3.tone)
+        assertFalse(round3.isFinished)
+
+        result = round3
+        repeat(59) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Minute 3 of 3", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val done = sequence.tick()
+        assertNull(done.remainingSeconds)
+        assertNull(done.phaseLabel)
+        assertEquals(RestTimerTone.DONE, done.tone)
+        assertTrue(done.isFinished)
+    }
+
+    @Test
+    fun repBasedSequence_zero_and_negativeLeadIn_match_default_sequence() {
+        val defaultSequence = drainSequence(
+            IntervalTimerSequence(IntervalTimerState.RepBased(totalMinutes = 2, label = "EMOM"))
+        )
+
+        assertEquals(
+            defaultSequence,
+            drainSequence(
+                IntervalTimerSequence(
+                    IntervalTimerState.RepBased(totalMinutes = 2, label = "EMOM", leadInSeconds = 0)
+                )
+            ),
+        )
+        assertEquals(
+            defaultSequence,
+            drainSequence(
+                IntervalTimerSequence(
+                    IntervalTimerState.RepBased(totalMinutes = 2, label = "EMOM", leadInSeconds = -5)
+                )
+            ),
+        )
+    }
+
+    @Test
     fun timeBasedSequence_splits_work_and_rest_clamped() {
         // totalMinutes = 1, workSeconds = 120 (should clamp to 59s work, 1s rest)
         val sequence = IntervalTimerSequence(
@@ -203,6 +294,122 @@ class IntervalTimerServiceLogicTest {
         assertNull(done.remainingSeconds)
         assertEquals(RestTimerTone.DONE, done.tone)
         assertTrue(done.isFinished)
+    }
+
+    @Test
+    fun timeBasedSequence_withLeadIn_transitions_to_work_then_completes() {
+        val sequence = IntervalTimerSequence(
+            IntervalTimerState.TimeBased(totalMinutes = 2, workSeconds = 30, label = "Tabata", leadInSeconds = 5)
+        )
+
+        val initial = sequence.initialResult()
+        assertEquals(5, initial.remainingSeconds)
+        assertEquals("Get Ready", initial.phaseLabel)
+        assertNull(initial.tone)
+        assertFalse(initial.isFinished)
+
+        var result = initial
+        listOf(4, 3, 2, 1).forEach { remaining ->
+            result = sequence.tick()
+            assertEquals(remaining, result.remainingSeconds)
+            assertEquals("Get Ready", result.phaseLabel)
+            assertNull(result.tone)
+            assertFalse(result.isFinished)
+        }
+
+        val round1Work = sequence.tick()
+        assertEquals(30, round1Work.remainingSeconds)
+        assertEquals("Work", round1Work.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round1Work.tone)
+        assertFalse(round1Work.isFinished)
+
+        result = round1Work
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Work", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val round1Rest = sequence.tick()
+        assertEquals(30, round1Rest.remainingSeconds)
+        assertEquals("Rest", round1Rest.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round1Rest.tone)
+        assertFalse(round1Rest.isFinished)
+
+        result = round1Rest
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Rest", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val round2Work = sequence.tick()
+        assertEquals(30, round2Work.remainingSeconds)
+        assertEquals("Work", round2Work.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round2Work.tone)
+        assertFalse(round2Work.isFinished)
+
+        result = round2Work
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Work", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val round2Rest = sequence.tick()
+        assertEquals(30, round2Rest.remainingSeconds)
+        assertEquals("Rest", round2Rest.phaseLabel)
+        assertEquals(RestTimerTone.DONE, round2Rest.tone)
+        assertFalse(round2Rest.isFinished)
+
+        result = round2Rest
+        repeat(29) { result = sequence.tick() }
+        assertEquals(1, result.remainingSeconds)
+        assertEquals("Rest", result.phaseLabel)
+        assertEquals(RestTimerTone.TICK, result.tone)
+        assertFalse(result.isFinished)
+
+        val done = sequence.tick()
+        assertNull(done.remainingSeconds)
+        assertNull(done.phaseLabel)
+        assertEquals(RestTimerTone.DONE, done.tone)
+        assertTrue(done.isFinished)
+    }
+
+    @Test
+    fun timeBasedSequence_zero_and_negativeLeadIn_match_default_sequence() {
+        val defaultSequence = drainSequence(
+            IntervalTimerSequence(
+                IntervalTimerState.TimeBased(totalMinutes = 2, workSeconds = 30, label = "Tabata")
+            )
+        )
+
+        assertEquals(
+            defaultSequence,
+            drainSequence(
+                IntervalTimerSequence(
+                    IntervalTimerState.TimeBased(
+                        totalMinutes = 2,
+                        workSeconds = 30,
+                        label = "Tabata",
+                        leadInSeconds = 0,
+                    )
+                )
+            ),
+        )
+        assertEquals(
+            defaultSequence,
+            drainSequence(
+                IntervalTimerSequence(
+                    IntervalTimerState.TimeBased(
+                        totalMinutes = 2,
+                        workSeconds = 30,
+                        label = "Tabata",
+                        leadInSeconds = -5,
+                    )
+                )
+            ),
+        )
     }
 
     @Test
@@ -285,5 +492,16 @@ class IntervalTimerServiceLogicTest {
 
         val zeroTime = IntervalTimerSequence(IntervalTimerState.TimeBased(0, 30, "Label"))
         assertTrue(zeroTime.initialResult().isFinished)
+    }
+
+    private fun drainSequence(sequence: IntervalTimerSequence): List<IntervalTickResult> {
+        val results = mutableListOf<IntervalTickResult>()
+        var result = sequence.initialResult()
+        results += result
+        while (!result.isFinished) {
+            result = sequence.tick()
+            results += result
+        }
+        return results
     }
 }
