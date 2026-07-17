@@ -35,8 +35,13 @@ interface IntervalTimerController {
     val remainingSeconds: StateFlow<Int?>
     val phaseLabel: StateFlow<String?>
     fun startCountdown(seconds: Int, label: String, leadInSeconds: Int = 0)
-    fun startRepBasedIntervals(totalMinutes: Int, label: String)
-    fun startTimeBasedIntervals(totalMinutes: Int, workSeconds: Int, label: String)
+    fun startRepBasedIntervals(totalMinutes: Int, label: String, leadInSeconds: Int = 0)
+    fun startTimeBasedIntervals(
+        totalMinutes: Int,
+        workSeconds: Int,
+        label: String,
+        leadInSeconds: Int = 0,
+    )
     fun stop()
 }
 
@@ -67,19 +72,36 @@ class InMemoryIntervalTimerController : IntervalTimerController {
         }
     }
 
-    override fun startRepBasedIntervals(totalMinutes: Int, label: String) {
+    override fun startRepBasedIntervals(totalMinutes: Int, label: String, leadInSeconds: Int) {
         if (totalMinutes > 0) {
-            _remainingSeconds.value = 60
-            _phaseLabel.value = intervalTimerRepBasedLabel(1, totalMinutes)
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
+            if (leadInDuration > 0) {
+                _remainingSeconds.value = leadInDuration
+                _phaseLabel.value = COUNTDOWN_LEAD_IN_LABEL
+            } else {
+                _remainingSeconds.value = 60
+                _phaseLabel.value = intervalTimerRepBasedLabel(1, totalMinutes)
+            }
         } else {
             stop()
         }
     }
 
-    override fun startTimeBasedIntervals(totalMinutes: Int, workSeconds: Int, label: String) {
+    override fun startTimeBasedIntervals(
+        totalMinutes: Int,
+        workSeconds: Int,
+        label: String,
+        leadInSeconds: Int,
+    ) {
         if (totalMinutes > 0) {
-            _remainingSeconds.value = clampedIntervalWorkSeconds(workSeconds)
-            _phaseLabel.value = "Work"
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
+            if (leadInDuration > 0) {
+                _remainingSeconds.value = leadInDuration
+                _phaseLabel.value = COUNTDOWN_LEAD_IN_LABEL
+            } else {
+                _remainingSeconds.value = clampedIntervalWorkSeconds(workSeconds)
+                _phaseLabel.value = "Work"
+            }
         } else {
             stop()
         }
@@ -101,12 +123,23 @@ class AndroidIntervalTimerController(context: Context) : IntervalTimerController
         IntervalTimerService.startCountdown(appContext, seconds, label, leadInSeconds)
     }
 
-    override fun startRepBasedIntervals(totalMinutes: Int, label: String) {
-        IntervalTimerService.startRepBasedIntervals(appContext, totalMinutes, label)
+    override fun startRepBasedIntervals(totalMinutes: Int, label: String, leadInSeconds: Int) {
+        IntervalTimerService.startRepBasedIntervals(appContext, totalMinutes, label, leadInSeconds)
     }
 
-    override fun startTimeBasedIntervals(totalMinutes: Int, workSeconds: Int, label: String) {
-        IntervalTimerService.startTimeBasedIntervals(appContext, totalMinutes, workSeconds, label)
+    override fun startTimeBasedIntervals(
+        totalMinutes: Int,
+        workSeconds: Int,
+        label: String,
+        leadInSeconds: Int,
+    ) {
+        IntervalTimerService.startTimeBasedIntervals(
+            appContext,
+            totalMinutes,
+            workSeconds,
+            label,
+            leadInSeconds,
+        )
     }
 
     override fun stop() {
@@ -116,8 +149,13 @@ class AndroidIntervalTimerController(context: Context) : IntervalTimerController
 
 internal sealed interface IntervalTimerState {
     data class Countdown(val seconds: Int, val label: String, val leadInSeconds: Int = 0) : IntervalTimerState
-    data class RepBased(val totalMinutes: Int, val label: String) : IntervalTimerState
-    data class TimeBased(val totalMinutes: Int, val workSeconds: Int, val label: String) : IntervalTimerState
+    data class RepBased(val totalMinutes: Int, val label: String, val leadInSeconds: Int = 0) : IntervalTimerState
+    data class TimeBased(
+        val totalMinutes: Int,
+        val workSeconds: Int,
+        val label: String,
+        val leadInSeconds: Int = 0,
+    ) : IntervalTimerState
 }
 
 internal data class IntervalTickResult(
@@ -160,9 +198,14 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 }
             }
             is IntervalTimerState.RepBased -> {
+                val leadInDuration = state.leadInSeconds.coerceAtLeast(0)
                 if (state.totalMinutes <= 0) {
                     remainingInPhase = 0
                     phaseLabel = null
+                } else if (leadInDuration > 0) {
+                    isLeadInPhase = true
+                    remainingInPhase = leadInDuration
+                    phaseLabel = COUNTDOWN_LEAD_IN_LABEL
                 } else {
                     currentRound = 1
                     remainingInPhase = 60
@@ -170,9 +213,14 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 }
             }
             is IntervalTimerState.TimeBased -> {
+                val leadInDuration = state.leadInSeconds.coerceAtLeast(0)
                 if (state.totalMinutes <= 0) {
                     remainingInPhase = 0
                     phaseLabel = null
+                } else if (leadInDuration > 0) {
+                    isLeadInPhase = true
+                    remainingInPhase = leadInDuration
+                    phaseLabel = COUNTDOWN_LEAD_IN_LABEL
                 } else {
                     currentRound = 1
                     isWorkPhase = true
@@ -192,10 +240,14 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 isFinished = true,
             )
         }
-        val isStartTone = when (state) {
-            is IntervalTimerState.Countdown -> false
-            is IntervalTimerState.RepBased -> true
-            is IntervalTimerState.TimeBased -> true
+        val isStartTone = if (isLeadInPhase) {
+            false
+        } else {
+            when (state) {
+                is IntervalTimerState.Countdown -> false
+                is IntervalTimerState.RepBased -> true
+                is IntervalTimerState.TimeBased -> true
+            }
         }
         return IntervalTickResult(
             remainingSeconds = remainingInPhase,
@@ -249,6 +301,18 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 )
             }
             is IntervalTimerState.RepBased -> {
+                if (isLeadInPhase) {
+                    isLeadInPhase = false
+                    currentRound = 1
+                    remainingInPhase = 60
+                    phaseLabel = intervalTimerRepBasedLabel(currentRound, state.totalMinutes)
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
                 if (currentRound >= state.totalMinutes) {
                     return IntervalTickResult(
                         remainingSeconds = null,
@@ -268,6 +332,19 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 )
             }
             is IntervalTimerState.TimeBased -> {
+                if (isLeadInPhase) {
+                    isLeadInPhase = false
+                    currentRound = 1
+                    isWorkPhase = true
+                    remainingInPhase = clampedIntervalWorkSeconds(state.workSeconds)
+                    phaseLabel = "Work"
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
                 if (!isWorkPhase && currentRound >= state.totalMinutes) {
                     return IntervalTickResult(
                         remainingSeconds = null,
@@ -324,13 +401,15 @@ class IntervalTimerService : Service() {
             ACTION_START_REP_BASED -> {
                 val totalMinutes = intent.getIntExtra(EXTRA_TOTAL_MINUTES, 0)
                 val label = intent.getStringExtra(EXTRA_LABEL) ?: ""
-                startSequence(IntervalTimerState.RepBased(totalMinutes, label))
+                val leadInSeconds = intent.getIntExtra(EXTRA_LEAD_IN_SECONDS, 0).coerceAtLeast(0)
+                startSequence(IntervalTimerState.RepBased(totalMinutes, label, leadInSeconds))
             }
             ACTION_START_TIME_BASED -> {
                 val totalMinutes = intent.getIntExtra(EXTRA_TOTAL_MINUTES, 0)
                 val workSeconds = intent.getIntExtra(EXTRA_WORK_SECONDS, 30)
                 val label = intent.getStringExtra(EXTRA_LABEL) ?: ""
-                startSequence(IntervalTimerState.TimeBased(totalMinutes, workSeconds, label))
+                val leadInSeconds = intent.getIntExtra(EXTRA_LEAD_IN_SECONDS, 0).coerceAtLeast(0)
+                startSequence(IntervalTimerState.TimeBased(totalMinutes, workSeconds, label, leadInSeconds))
             }
             ACTION_STOP -> stopTimer()
         }
@@ -507,22 +586,37 @@ class IntervalTimerService : Service() {
             ContextCompat.startForegroundService(context, intent)
         }
 
-        fun startRepBasedIntervals(context: Context, totalMinutes: Int, label: String) {
+        fun startRepBasedIntervals(
+            context: Context,
+            totalMinutes: Int,
+            label: String,
+            leadInSeconds: Int = 0,
+        ) {
             if (totalMinutes <= 0) return
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
             val intent = Intent(context, IntervalTimerService::class.java)
                 .setAction(ACTION_START_REP_BASED)
                 .putExtra(EXTRA_TOTAL_MINUTES, totalMinutes)
                 .putExtra(EXTRA_LABEL, label)
+                .putExtra(EXTRA_LEAD_IN_SECONDS, leadInDuration)
             ContextCompat.startForegroundService(context, intent)
         }
 
-        fun startTimeBasedIntervals(context: Context, totalMinutes: Int, workSeconds: Int, label: String) {
+        fun startTimeBasedIntervals(
+            context: Context,
+            totalMinutes: Int,
+            workSeconds: Int,
+            label: String,
+            leadInSeconds: Int = 0,
+        ) {
             if (totalMinutes <= 0) return
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
             val intent = Intent(context, IntervalTimerService::class.java)
                 .setAction(ACTION_START_TIME_BASED)
                 .putExtra(EXTRA_TOTAL_MINUTES, totalMinutes)
                 .putExtra(EXTRA_WORK_SECONDS, workSeconds)
                 .putExtra(EXTRA_LABEL, label)
+                .putExtra(EXTRA_LEAD_IN_SECONDS, leadInDuration)
             ContextCompat.startForegroundService(context, intent)
         }
 
