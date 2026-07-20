@@ -82,6 +82,36 @@ class CaptureScreenLogicTest {
     }
 
     @Test
+    fun finisherTimerMode_time_based_prefers_current_duration_seconds_over_stale_param() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 8,
+            current_duration_seconds = 35,
+            params = JsonObject(mapOf("work_seconds_per_minute" to JsonPrimitive(30))),
+        )
+
+        assertEquals(
+            FinisherTimerMode.TimeBased(totalMinutes = 8, workSeconds = 35, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_time_based_when_current_duration_seconds_present_without_static_param() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 8,
+            current_duration_seconds = 40,
+            params = JsonObject(emptyMap()),
+        )
+
+        assertEquals(
+            FinisherTimerMode.TimeBased(totalMinutes = 8, workSeconds = 40, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
     fun finisherTimerMode_rep_based_when_both_timer_params_present() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
@@ -90,6 +120,26 @@ class CaptureScreenLogicTest {
                 mapOf(
                     "target_reps_per_minute" to JsonPrimitive(80),
                     "work_seconds_per_minute" to JsonPrimitive(35),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.RepBased(totalMinutes = 8, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_rep_based_when_target_reps_and_current_duration_seconds_present() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 8,
+            current_duration_seconds = 35,
+            params = JsonObject(
+                mapOf(
+                    "target_reps_per_minute" to JsonPrimitive(80),
+                    "work_seconds_per_minute" to JsonPrimitive(30),
                 ),
             ),
         )
