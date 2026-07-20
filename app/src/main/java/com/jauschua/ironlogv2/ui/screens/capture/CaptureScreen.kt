@@ -172,9 +172,10 @@ private fun SessionContent(
     var carriedLoadByMovement by remember(session.id) { mutableStateOf<Map<Int, Double>>(emptyMap()) }
     var carriedRepsByMovement by remember(session.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
 
-    val loadPlanIsFlat = isFlatAcrossSets(currentExercise?.planned_sets?.map { it.target_load } ?: emptyList())
+    val workingPlannedSets = currentExercise?.planned_sets?.filter { !it.is_warmup } ?: emptyList()
+    val loadPlanIsFlat = isFlatAcrossSets(workingPlannedSets.map { it.target_load })
     val repsPlanIsFlat = isFlatAcrossRepTargets(
-        currentExercise?.planned_sets?.map { it.target_reps_low to it.target_reps_high } ?: emptyList(),
+        workingPlannedSets.map { it.target_reps_low to it.target_reps_high },
     )
 
     // Input state for the current set; auto-resets (and re-pre-fills) when the cursor advances.

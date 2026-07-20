@@ -699,6 +699,43 @@ class CaptureScreenLogicTest {
     }
 
     @Test
+    fun carryForwardFlatness_ignoresRampSets_whenWorkingSetsAreFlat() {
+        val plannedSets = listOf(
+            PlannedSetOut(
+                id = 1, set_index = 0, set_role = "RAMP", is_warmup = true,
+                target_load = 67.5, target_reps_low = 5, target_reps_high = 5,
+            ),
+            PlannedSetOut(
+                id = 2, set_index = 1, set_role = "RAMP", is_warmup = true,
+                target_load = 102.5, target_reps_low = 3, target_reps_high = 3,
+            ),
+            PlannedSetOut(
+                id = 3, set_index = 2, set_role = "RAMP", is_warmup = true,
+                target_load = 135.0, target_reps_low = 2, target_reps_high = 2,
+            ),
+            PlannedSetOut(
+                id = 4, set_index = 3, set_role = "WORKING", is_warmup = false,
+                target_load = 170.0, target_reps_low = 6, target_reps_high = 8,
+            ),
+            PlannedSetOut(
+                id = 5, set_index = 4, set_role = "WORKING", is_warmup = false,
+                target_load = 170.0, target_reps_low = 6, target_reps_high = 8,
+            ),
+            PlannedSetOut(
+                id = 6, set_index = 5, set_role = "WORKING", is_warmup = false,
+                target_load = 170.0, target_reps_low = 6, target_reps_high = 8,
+            ),
+        )
+        val workingPlannedSets = plannedSets.filter { !it.is_warmup }
+
+        assertEquals(true, isFlatAcrossSets(workingPlannedSets.map { it.target_load }))
+        assertEquals(
+            true,
+            isFlatAcrossRepTargets(workingPlannedSets.map { it.target_reps_low to it.target_reps_high }),
+        )
+    }
+
+    @Test
     fun isFlatAcrossRepTargets_true_when_all_non_null_targets_match() {
         assertEquals(true, isFlatAcrossRepTargets(listOf(8 to 8, 8 to 8, 8 to 8)))
     }
