@@ -165,18 +165,30 @@ private fun SessionContent(
         if (intervalRemainingSeconds == null) activeIntervalKey = null
     }
 
-    // Fix F — weight carries forward: last load entered per movement_id this session. When a
-    // set's load is entered/changed, later UNLOGGED sets of the SAME exercise pre-fill to it
-    // instead of their own static target_load (see effectiveLoadPrefill/withCarriedLoad). Scoped
-    // to the session (not the cursor) so it survives the cursor advancing across sets.
+    // Fix F — weight/reps carry forward: last load/reps entered per movement_id this session.
+    // Later UNLOGGED sets of the SAME exercise pre-fill to those values only when that field's
+    // plan is flat across the exercise. Scoped to the session (not the cursor) so it survives the
+    // cursor advancing across sets.
     var carriedLoadByMovement by remember(session.id) { mutableStateOf<Map<Int, Double>>(emptyMap()) }
+    var carriedRepsByMovement by remember(session.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+
+    val loadPlanIsFlat = isFlatAcrossSets(currentExercise?.planned_sets?.map { it.target_load } ?: emptyList())
+    val repsPlanIsFlat = isFlatAcrossRepTargets(
+        currentExercise?.planned_sets?.map { it.target_reps_low to it.target_reps_high } ?: emptyList(),
+    )
 
     // Input state for the current set; auto-resets (and re-pre-fills) when the cursor advances.
-    // Weight defaults to the carried-forward load for this exercise if one was entered on an
-    // earlier set, else the prescription target (fix F) — the lifter can accept or adjust before
-    // logging ("log = accept or adjust").
+    // Weight/reps default to carried-forward entries for this exercise when the plan is flat,
+    // else the prescription target — the lifter can accept or adjust before logging.
     var setLoad by remember(currentPlannedSetId) {
-        mutableStateOf(effectiveLoadPrefill(carriedLoadByMovement, currentExercise?.movement_id ?: -1, currentSet?.target_load))
+        mutableStateOf(
+            effectiveLoadPrefill(
+                carriedLoadByMovement,
+                currentExercise?.movement_id ?: -1,
+                currentSet?.target_load,
+                loadPlanIsFlat,
+            ),
+        )
     }
     // Spec 13: compute-once via remember(currentPlannedSetId) can evaluate against stale
     // carriedLoadByMovement / currentExercise during complex multi-StateFlow recompositions or
@@ -189,6 +201,7 @@ private fun SessionContent(
                 carriedLoadByMovement,
                 currentExercise?.movement_id ?: -1,
                 currentSet?.target_load,
+                loadPlanIsFlat,
             )
             // TEMP diagnostic logging (spec 13 follow-up) for the still-unconfirmed
             // GIANT_SET carry-forward report — remove once the root cause is pinned
@@ -202,7 +215,26 @@ private fun SessionContent(
             setLoad = resolved
         }
     }
-    var setReps by remember(currentPlannedSetId) { mutableStateOf(currentSet?.let(::prefillReps) ?: "") }
+    var setReps by remember(currentPlannedSetId) {
+        mutableStateOf(
+            effectiveRepsPrefill(
+                carriedRepsByMovement,
+                currentExercise?.movement_id ?: -1,
+                currentSet,
+                repsPlanIsFlat,
+            ),
+        )
+    }
+    LaunchedEffect(currentPlannedSetId, currentExercise?.movement_id) {
+        if (currentPlannedSetId != null) {
+            setReps = effectiveRepsPrefill(
+                carriedRepsByMovement,
+                currentExercise?.movement_id ?: -1,
+                currentSet,
+                repsPlanIsFlat,
+            )
+        }
+    }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
     var setFeltPeak by remember(currentPlannedSetId) { mutableStateOf("") }
 
@@ -477,7 +509,13 @@ private fun SessionContent(
                                                 )
                                             }
                                         },
-                                        onRepsChange = { setReps = it },
+                                        onRepsChange = {
+                                            setReps = it
+                                            currentExercise?.let { ex ->
+                                                carriedRepsByMovement =
+                                                    withCarriedReps(carriedRepsByMovement, ex.movement_id, it.toIntOrNull())
+                                            }
+                                        },
                                         onTapSelect = { selectedTap = it },
                                         onFeltPeakChange = { setFeltPeak = it },
                                         onLogSet = {
@@ -1343,11 +1381,46 @@ internal fun loggedActualLine(actualLoad: Double?, actualReps: Int?, tap: String
 /**
  * Effective load pre-fill for an UNLOGGED set belonging to [movementId] (fix F): the
  * carried-forward load entered on an earlier set of the SAME exercise this session (see
- * [withCarriedLoad]) if one exists, else the set's own prescribed [targetLoad]. Never applied to
- * already-logged sets — those show their real actual via [loggedActualLine] instead.
+ * [withCarriedLoad]) if one exists and the exercise plan is flat for load, else the set's own
+ * prescribed [targetLoad]. Never applied to already-logged sets — those show their real actual
+ * via [loggedActualLine] instead.
  */
-internal fun effectiveLoadPrefill(carriedLoad: Map<Int, Double>, movementId: Int, targetLoad: Double?): String =
-    prefillWeight(carriedLoad[movementId] ?: targetLoad)
+internal fun effectiveLoadPrefill(
+    carriedLoad: Map<Int, Double>,
+    movementId: Int,
+    targetLoad: Double?,
+    planIsFlat: Boolean,
+): String =
+    prefillWeight(if (planIsFlat) carriedLoad[movementId] ?: targetLoad else targetLoad)
+
+/**
+ * True iff every element is null-or-equal to the others -- i.e. the exercise's plan is
+ * uniform for this field, so carry-forward is safe to apply without overriding a
+ * deliberately different per-set value. An empty or single-element list is trivially flat.
+ */
+internal fun isFlatAcrossSets(values: List<Double?>): Boolean =
+    values.filterNotNull().distinct().size <= 1
+
+/**
+ * Reps flatness is checked on the planned (low, high) pair. Pairs with no target at all are
+ * ignored so an unprescribed set does not break carry-forward for matching prescribed sets.
+ */
+internal fun isFlatAcrossRepTargets(values: List<Pair<Int?, Int?>>): Boolean =
+    values.filter { (low, high) -> low != null || high != null }.distinct().size <= 1
+
+/**
+ * Effective reps pre-fill for an UNLOGGED set belonging to [movementId]: the carried-forward
+ * reps entered on an earlier set of the SAME exercise this session if one exists and the
+ * exercise plan is flat for reps, else the set's own prescribed reps target.
+ */
+internal fun effectiveRepsPrefill(
+    carriedReps: Map<Int, Int>,
+    movementId: Int,
+    plannedSet: PlannedSetOut?,
+    planIsFlat: Boolean,
+): String =
+    if (planIsFlat) carriedReps[movementId]?.toString() ?: plannedSet?.let(::prefillReps) ?: ""
+    else plannedSet?.let(::prefillReps) ?: ""
 
 /**
  * Records [newLoad] as the carried-forward default for [movementId] (fix F) — later unlogged
@@ -1360,6 +1433,13 @@ internal fun effectiveLoadPrefill(carriedLoad: Map<Int, Double>, movementId: Int
  */
 internal fun withCarriedLoad(carriedLoad: Map<Int, Double>, movementId: Int, newLoad: Double?): Map<Int, Double> =
     if (newLoad == null) carriedLoad else carriedLoad + (movementId to newLoad)
+
+/**
+ * Records [newReps] as the carried-forward default for [movementId]. A null parse is a no-op,
+ * matching [withCarriedLoad]'s clearing behavior.
+ */
+internal fun withCarriedReps(carriedReps: Map<Int, Int>, movementId: Int, newReps: Int?): Map<Int, Int> =
+    if (newReps == null) carriedReps else carriedReps + (movementId to newReps)
 
 /**
  * Shoe-swap cue decision for a group boundary: the shoe to swap TO (rendered as a

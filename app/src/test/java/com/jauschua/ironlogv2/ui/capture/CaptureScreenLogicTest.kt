@@ -7,6 +7,7 @@ import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.capture.bandNames
 import com.jauschua.ironlogv2.ui.screens.capture.effectiveLoadPrefill
+import com.jauschua.ironlogv2.ui.screens.capture.effectiveRepsPrefill
 import com.jauschua.ironlogv2.ui.screens.capture.FinisherTimerMode
 import com.jauschua.ironlogv2.ui.screens.capture.finisherTimerMode
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
@@ -15,6 +16,8 @@ import com.jauschua.ironlogv2.ui.screens.capture.groupProgressHint
 import com.jauschua.ironlogv2.ui.screens.capture.htObservedPeak
 import com.jauschua.ironlogv2.ui.screens.capture.htReconfigure
 import com.jauschua.ironlogv2.ui.screens.capture.htSetupLine
+import com.jauschua.ironlogv2.ui.screens.capture.isFlatAcrossRepTargets
+import com.jauschua.ironlogv2.ui.screens.capture.isFlatAcrossSets
 import com.jauschua.ironlogv2.ui.screens.capture.isSetEditable
 import com.jauschua.ironlogv2.ui.screens.capture.loadDisplayLabel
 import com.jauschua.ironlogv2.ui.screens.capture.loadInputLabel
@@ -30,6 +33,7 @@ import com.jauschua.ironlogv2.ui.screens.capture.shoeTransition
 import com.jauschua.ironlogv2.ui.screens.capture.tapResultLabel
 import com.jauschua.ironlogv2.ui.screens.capture.warmupJumpRopeSeconds
 import com.jauschua.ironlogv2.ui.screens.capture.withCarriedLoad
+import com.jauschua.ironlogv2.ui.screens.capture.withCarriedReps
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -625,6 +629,41 @@ class CaptureScreenLogicTest {
     // ── Fix F: weight carries forward — enter 175 on set 1, sets 2 & 3 default to 175 ──────
 
     @Test
+    fun isFlatAcrossSets_true_when_all_non_null_values_match() {
+        assertEquals(true, isFlatAcrossSets(listOf(170.0, 170.0, 170.0)))
+    }
+
+    @Test
+    fun isFlatAcrossSets_false_when_non_null_values_differ() {
+        assertEquals(false, isFlatAcrossSets(listOf(170.0, 175.0, 180.0)))
+    }
+
+    @Test
+    fun isFlatAcrossSets_true_when_nulls_are_mixed_with_same_non_null_values() {
+        assertEquals(true, isFlatAcrossSets(listOf(null, 170.0, null, 170.0)))
+    }
+
+    @Test
+    fun isFlatAcrossSets_true_for_empty_list() {
+        assertEquals(true, isFlatAcrossSets(emptyList()))
+    }
+
+    @Test
+    fun isFlatAcrossRepTargets_true_when_all_non_null_targets_match() {
+        assertEquals(true, isFlatAcrossRepTargets(listOf(8 to 8, 8 to 8, 8 to 8)))
+    }
+
+    @Test
+    fun isFlatAcrossRepTargets_false_when_targets_differ() {
+        assertEquals(false, isFlatAcrossRepTargets(listOf(8 to 8, 8 to 8, 6 to 10)))
+    }
+
+    @Test
+    fun isFlatAcrossRepTargets_true_when_null_targets_are_mixed_with_same_non_null_targets() {
+        assertEquals(true, isFlatAcrossRepTargets(listOf(null to null, 8 to 8, null to null, 8 to 8)))
+    }
+
+    @Test
     fun withCarriedLoad_records_the_new_load_for_the_movement() {
         val carried = withCarriedLoad(emptyMap(), movementId = 5, newLoad = 175.0)
         assertEquals(mapOf(5 to 175.0), carried)
@@ -647,18 +686,58 @@ class CaptureScreenLogicTest {
         // Day-1 scenario: prescribed 170, athlete enters 175 on set 1 -> set 3 (still
         // prescribed 170 on the server) must prefill 175, not revert to 170.
         val carried = mapOf(5 to 175.0)
-        assertEquals("175", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 170.0))
+        assertEquals("175", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 170.0, planIsFlat = true))
+    }
+
+    @Test
+    fun effectiveLoadPrefill_uses_sets_own_target_when_plan_is_not_flat() {
+        val carried = mapOf(5 to 175.0)
+        assertEquals("180", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 180.0, planIsFlat = false))
     }
 
     @Test
     fun effectiveLoadPrefill_falls_back_to_target_when_nothing_carried_yet() {
-        assertEquals("170", effectiveLoadPrefill(emptyMap(), movementId = 5, targetLoad = 170.0))
+        assertEquals("170", effectiveLoadPrefill(emptyMap(), movementId = 5, targetLoad = 170.0, planIsFlat = true))
     }
 
     @Test
     fun effectiveLoadPrefill_falls_back_to_target_for_a_different_movement() {
         val carried = mapOf(9 to 50.0) // carried for a DIFFERENT exercise
-        assertEquals("170", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 170.0))
+        assertEquals("170", effectiveLoadPrefill(carried, movementId = 5, targetLoad = 170.0, planIsFlat = true))
+    }
+
+    @Test
+    fun withCarriedReps_records_the_new_reps_for_the_movement() {
+        val carried = withCarriedReps(emptyMap(), movementId = 5, newReps = 9)
+        assertEquals(mapOf(5 to 9), carried)
+    }
+
+    @Test
+    fun withCarriedReps_is_a_noop_when_new_reps_is_null_clearing_the_field() {
+        val carried = withCarriedReps(mapOf(5 to 9), movementId = 5, newReps = null)
+        assertEquals("clearing the input must not blank the carried default for later sets", mapOf(5 to 9), carried)
+    }
+
+    @Test
+    fun effectiveRepsPrefill_uses_carried_reps_over_the_sets_own_target_when_plan_is_flat() {
+        val carried = mapOf(5 to 9)
+        val plannedSet = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 8, target_reps_high = 8,
+        )
+
+        assertEquals("9", effectiveRepsPrefill(carried, movementId = 5, plannedSet = plannedSet, planIsFlat = true))
+    }
+
+    @Test
+    fun effectiveRepsPrefill_uses_sets_own_target_when_plan_is_not_flat() {
+        val carried = mapOf(5 to 9)
+        val plannedSet = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_reps_low = 6, target_reps_high = 10,
+        )
+
+        assertEquals("6", effectiveRepsPrefill(carried, movementId = 5, plannedSet = plannedSet, planIsFlat = false))
     }
 
     // ── Spec 13: GIANT_SET round interleaving verification ──────────────────────────────
@@ -669,13 +748,13 @@ class CaptureScreenLogicTest {
         var carried = emptyMap<Int, Double>()
 
         // Round 0 - Set 1 of each exercise
-        assertEquals("170", effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0))
+        assertEquals("170", effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0, planIsFlat = true))
         carried = withCarriedLoad(carried, movementId = 36, newLoad = 175.0) // Athlete enters 175
 
-        assertEquals("60", effectiveLoadPrefill(carried, movementId = 40, targetLoad = 60.0))
+        assertEquals("60", effectiveLoadPrefill(carried, movementId = 40, targetLoad = 60.0, planIsFlat = true))
         carried = withCarriedLoad(carried, movementId = 40, newLoad = 65.0) // Athlete enters 65
 
-        assertEquals("", effectiveLoadPrefill(carried, movementId = 42, targetLoad = null))
+        assertEquals("", effectiveLoadPrefill(carried, movementId = 42, targetLoad = null, planIsFlat = true))
         // Athlete enters no weight for Knee Raise
 
         // Round 1 - Set 2 of each exercise (cursor round-major interleaving)
@@ -683,17 +762,17 @@ class CaptureScreenLogicTest {
         assertEquals(
             "Pendlay Row R1 must pre-fill 175 despite Incline DB Press and Knee Raise interleaving",
             "175",
-            effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0),
+            effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0, planIsFlat = true),
         )
         // If athlete accepts 175 on R1 without typing:
-        assertEquals("65", effectiveLoadPrefill(carried, movementId = 40, targetLoad = 60.0))
+        assertEquals("65", effectiveLoadPrefill(carried, movementId = 40, targetLoad = 60.0, planIsFlat = true))
 
         // Round 2 - Set 3 of Pendlay Row: verify clearing input field on R1 doesn't clear default for R2
         carried = withCarriedLoad(carried, movementId = 36, newLoad = null) // Athlete cleared field on R1
         assertEquals(
             "Pendlay Row R2 must still pre-fill 175 after null input on R1",
             "175",
-            effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0),
+            effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0, planIsFlat = true),
         )
     }
 }
