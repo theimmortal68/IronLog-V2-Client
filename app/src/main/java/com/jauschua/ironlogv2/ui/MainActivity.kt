@@ -34,6 +34,7 @@ import androidx.navigation.navArgument
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.ui.screens.bands.BandsScreen
 import com.jauschua.ironlogv2.ui.screens.capture.CaptureScreen
+import com.jauschua.ironlogv2.ui.screens.cardio.CardioLogScreen
 import com.jauschua.ironlogv2.ui.screens.history.HistoryDetailScreen
 import com.jauschua.ironlogv2.ui.screens.history.HistoryScreen
 import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
@@ -180,6 +181,9 @@ private fun RootScaffold() {
             }
             composable(Routes.REVIEW) {
                 ReviewScreen(onBack = { nav.popBackStack() })
+            }
+            composable(Routes.CARDIO_LOG) {
+                CardioLogScreen(onBack = { nav.popBackStack() })
             }
         }
     }
