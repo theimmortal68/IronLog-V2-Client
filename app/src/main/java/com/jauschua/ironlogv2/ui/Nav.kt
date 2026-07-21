@@ -12,6 +12,7 @@ object Routes {
     const val HISTORY_DETAIL = "history/{id}"
     const val REVIEW = "review"
     const val CARDIO_LOG = "cardio-log"
+    const val CARDIO_HISTORY = "cardio-history"
 
     /** Phase 1's program for the first-run wizard (beta has a single program). */
     const val DEFAULT_PROGRAM_ID = 1

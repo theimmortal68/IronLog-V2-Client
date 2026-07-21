@@ -21,6 +21,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +43,7 @@ import java.time.LocalDate
 @Composable
 fun CardioLogScreen(
     onBack: () -> Unit,
+    onHistory: () -> Unit,
     vm: CardioLogViewModel = viewModel(factory = CardioLogViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -62,6 +64,9 @@ fun CardioLogScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
+                },
+                actions = {
+                    TextButton(onClick = onHistory) { Text("History") }
                 },
             )
         },
