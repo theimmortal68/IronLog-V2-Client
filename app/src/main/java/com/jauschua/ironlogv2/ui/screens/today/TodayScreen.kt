@@ -1,6 +1,7 @@
 // TodayScreen.kt
 package com.jauschua.ironlogv2.ui.screens.today
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,10 +54,12 @@ fun TodayScreen(
     onContinue: () -> Unit,
     onHistory: () -> Unit,
     onReview: () -> Unit,
+    onLogCardio: () -> Unit,
     vm: TodayViewModel = viewModel(factory = TodayViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val reviewCount by vm.reviewCount.collectAsStateWithLifecycle()
+    val cardioSummary by vm.cardioWeeklySummary.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -72,19 +75,34 @@ fun TodayScreen(
         },
     ) { inner ->
         Surface(modifier = Modifier.fillMaxSize().padding(inner)) {
-            when (val s = state) {
-                is TodayUiState.Loading, is TodayUiState.Generating, is TodayUiState.Approving -> Centered {
-                    CircularProgressIndicator()
+            Column(modifier = Modifier.fillMaxSize()) {
+                cardioSummary?.let { summary ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp).clickable(onClick = onLogCardio),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "🏃 Cardio: ${summary.count}/${summary.target} this week",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 }
-                is TodayUiState.HasPlanned -> HasPlannedContent(s.session, onContinue)
-                is TodayUiState.NoSession -> NoSessionContent(s.days) { day -> vm.generate(day) }
-                is TodayUiState.Preview -> PreviewContent(
-                    preview = s.preview,
-                    onApprove = { vm.approve() },
-                    onRegenerate = { vm.regenerate(s.preview.day_role) },
-                )
-                is TodayUiState.GenerateError -> ErrorRetryBox(s.msg) { vm.load() }
-                is TodayUiState.Approved -> LaunchedEffect(s.sessionId) { onContinue() }
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    when (val s = state) {
+                        is TodayUiState.Loading, is TodayUiState.Generating, is TodayUiState.Approving -> Centered {
+                            CircularProgressIndicator()
+                        }
+                        is TodayUiState.HasPlanned -> HasPlannedContent(s.session, onContinue)
+                        is TodayUiState.NoSession -> NoSessionContent(s.days) { day -> vm.generate(day) }
+                        is TodayUiState.Preview -> PreviewContent(
+                            preview = s.preview,
+                            onApprove = { vm.approve() },
+                            onRegenerate = { vm.regenerate(s.preview.day_role) },
+                        )
+                        is TodayUiState.GenerateError -> ErrorRetryBox(s.msg) { vm.load() }
+                        is TodayUiState.Approved -> LaunchedEffect(s.sessionId) { onContinue() }
+                    }
+                }
             }
         }
     }

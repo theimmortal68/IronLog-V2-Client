@@ -117,6 +117,7 @@ private fun RootScaffold() {
                     },
                     onHistory = { nav.navigate(Routes.HISTORY) },
                     onReview = { nav.navigate(Routes.REVIEW) },
+                    onLogCardio = { nav.navigate(Routes.CARDIO_LOG) },
                 )
             }
             composable(Routes.MOVEMENTS) {
