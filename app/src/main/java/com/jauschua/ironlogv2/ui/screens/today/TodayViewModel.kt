@@ -8,8 +8,10 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.data.api.IronLogException
+import com.jauschua.ironlogv2.data.api.dto.CardioWeeklySummaryOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.api.humanMessage
+import com.jauschua.ironlogv2.data.repo.CardioLogRepo
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.data.repo.GenerateRepo
 import com.jauschua.ironlogv2.data.repo.NotesRepo
@@ -54,6 +56,7 @@ class TodayViewModel(
     private val generateRepo: GenerateRepo,
     private val captureRepo: CaptureRepo,
     private val notesRepo: NotesRepo,
+    private val cardioLogRepo: CardioLogRepo,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TodayUiState>(TodayUiState.Loading)
@@ -61,6 +64,9 @@ class TodayViewModel(
 
     private val _reviewCount = MutableStateFlow(0)
     val reviewCount: StateFlow<Int> = _reviewCount.asStateFlow()
+
+    private val _cardioWeeklySummary = MutableStateFlow<CardioWeeklySummaryOut?>(null)
+    val cardioWeeklySummary: StateFlow<CardioWeeklySummaryOut?> = _cardioWeeklySummary.asStateFlow()
 
     /** Load the current picture: an already-planned session takes priority (Continue); otherwise
      *  fall back to the program's day list so the lifter can pick one to generate. Also refreshes
@@ -81,6 +87,7 @@ class TodayViewModel(
                 .onFailure { e -> _state.value = TodayUiState.GenerateError(errorMessage(e)) }
         }
         refreshReviewCount()
+        refreshCardioSummary()
     }
 
     /** Best-effort fetch of the pending-note count for the Review button badge. Leaves the count
@@ -89,6 +96,13 @@ class TodayViewModel(
         viewModelScope.launch {
             notesRepo.review()
                 .onSuccess { notes -> _reviewCount.value = notes.size }
+        }
+    }
+
+    private fun refreshCardioSummary() {
+        viewModelScope.launch {
+            cardioLogRepo.weeklySummary()
+                .onSuccess { summary -> _cardioWeeklySummary.value = summary }
         }
     }
 
@@ -138,6 +152,7 @@ class TodayViewModel(
                     generateRepo = app.container.generateRepo,
                     captureRepo = app.container.captureRepo,
                     notesRepo = app.container.notesRepo,
+                    cardioLogRepo = app.container.cardioLogRepo,
                 )
             }
         }
