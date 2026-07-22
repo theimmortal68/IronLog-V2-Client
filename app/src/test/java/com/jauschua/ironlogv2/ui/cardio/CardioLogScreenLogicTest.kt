@@ -31,6 +31,28 @@ class CardioLogScreenLogicTest {
     }
 
     @Test
+    fun buildCardioLogCreate_walkModality_ignoresStaleInclineAndBackwardWalk() {
+        assertEquals(
+            CardioLogCreate(
+                date = "2026-07-21",
+                duration_minutes = 30,
+                avg_hr = 132,
+                modality = "WALK",
+                incline_pct = null,
+                backward_walk_done = false,
+            ),
+            buildCardioLogCreate(
+                date = "2026-07-21",
+                durationMinutes = "30",
+                avgHr = "132",
+                modality = "WALK",
+                inclinePct = "8.5",
+                backwardWalkDone = true,
+            ),
+        )
+    }
+
+    @Test
     fun buildCardioLogCreate_validTreadmillInput_returnsCreateRequest() {
         assertEquals(
             CardioLogCreate(
@@ -70,6 +92,34 @@ class CardioLogScreenLogicTest {
                 modality = "TREADMILL",
                 inclinePct = "",
                 backwardWalkDone = false,
+            ),
+        )
+    }
+
+    @Test
+    fun buildCardioLogCreate_nonNumericAvgHr_returnsNull() {
+        assertNull(
+            buildCardioLogCreate(
+                date = "2026-07-21",
+                durationMinutes = "30",
+                avgHr = "132x",
+                modality = "WALK",
+                inclinePct = "",
+                backwardWalkDone = false,
+            ),
+        )
+    }
+
+    @Test
+    fun buildCardioLogCreate_nonNumericInclinePct_returnsNull() {
+        assertNull(
+            buildCardioLogCreate(
+                date = "2026-07-21",
+                durationMinutes = "35",
+                avgHr = "128",
+                modality = "TREADMILL",
+                inclinePct = "steep",
+                backwardWalkDone = true,
             ),
         )
     }
