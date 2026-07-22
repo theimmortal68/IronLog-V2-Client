@@ -133,3 +133,10 @@ Notes:
 - No HUMAN GATE anywhere in this batch — pure client UI/data-layer work, no schema/auth/build-logic/public-API-surface changes (the server-side public surface was already finalized in specs 44-45).
 - Review routing: spec 31 (thin DTOs/repo, no branching logic) is likely review-exempt; specs 32-34 (real UI state machines + user input validation) should get at least a light Opus pass given this session's carry-forward-bug history in this exact `ui/screens/` tree — use judgment at dispatch time based on the actual diff, but default to reviewing rather than skipping for anything with non-trivial logic (spec 32's `buildCardioLogCreate` validation function especially).
 - No Room/local-DB, no interval-timer, no offline-capture needed for this feature — confirmed in spec 31's own edge-cases section.
+
+## 2026-07-22 addendum: cardio-log form hardening (spec 32's deferred Low findings)
+
+- `.specs/35-cardio-log-form-hardening.md` → codex, worktree wt-35, depends on: none (spec 32 already merged). Fixes both deferred Low findings from spec 32's Opus review: (1) gates incline/backward-walk-done to TREADMILL modality at submit time (a stale value from an earlier Treadmill selection can no longer leak into a WALK submission); (2) non-numeric optional-field input (e.g. `avg_hr="132x"`) now correctly rejects (returns null, form doesn't submit) instead of silently discarding the malformed value as null.
+
+Delegation ratio: 1/1 (100%)
+Merge order: wt-35 standalone. No HUMAN GATE (no Forbidden-list hit).
