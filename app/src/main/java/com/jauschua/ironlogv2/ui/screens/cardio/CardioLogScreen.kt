@@ -180,12 +180,20 @@ internal fun buildCardioLogCreate(
     if (date.isBlank() || modality.isBlank()) return null
     val duration = durationMinutes.toIntOrNull() ?: return null
     if (duration <= 0) return null
+
+    val avgHrTrimmed = avgHr.trim()
+    val parsedAvgHr = if (avgHrTrimmed.isEmpty()) null else avgHrTrimmed.toIntOrNull() ?: return null
+
+    val isTreadmill = modality == "TREADMILL"
+    val inclineTrimmed = inclinePct.trim()
+    val parsedIncline = if (!isTreadmill || inclineTrimmed.isEmpty()) null else inclineTrimmed.toDoubleOrNull() ?: return null
+
     return CardioLogCreate(
         date = date,
         duration_minutes = duration,
-        avg_hr = avgHr.trim().toIntOrNull(),
+        avg_hr = parsedAvgHr,
         modality = modality,
-        incline_pct = inclinePct.trim().toDoubleOrNull(),
-        backward_walk_done = backwardWalkDone,
+        incline_pct = parsedIncline,
+        backward_walk_done = if (isTreadmill) backwardWalkDone else false,
     )
 }
