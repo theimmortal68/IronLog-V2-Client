@@ -136,7 +136,7 @@ Notes:
 
 ## 2026-07-22 addendum: cardio-log form hardening (spec 32's deferred Low findings)
 
-- `.specs/35-cardio-log-form-hardening.md` → codex, worktree wt-35, depends on: none (spec 32 already merged). Fixes both deferred Low findings from spec 32's Opus review: (1) gates incline/backward-walk-done to TREADMILL modality at submit time (a stale value from an earlier Treadmill selection can no longer leak into a WALK submission); (2) non-numeric optional-field input (e.g. `avg_hr="132x"`) now correctly rejects (returns null, form doesn't submit) instead of silently discarding the malformed value as null.
+- ~~.specs/35-cardio-log-form-hardening.md~~ → codex, worktree wt-35 — MERGED + LIVE 2026-07-22 (296d5fe). Fixes both deferred Low findings from spec 32's Opus review: (1) gates incline/backward-walk-done to TREADMILL modality at submit time; (2) non-numeric optional-field input now correctly rejects instead of silently discarding as null. Review-exempt (mechanical extension of an already-reviewed pure function). 9/9 `CardioLogScreenLogicTest` passing (up from 6), zero regressions.
 
 Delegation ratio: 1/1 (100%)
 Merge order: wt-35 standalone. No HUMAN GATE (no Forbidden-list hit).
