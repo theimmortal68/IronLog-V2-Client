@@ -1,12 +1,14 @@
 package com.jauschua.ironlogv2.ui.today
 
 import com.jauschua.ironlogv2.data.api.dto.DailyReadinessOut
+import com.jauschua.ironlogv2.data.api.dto.MissedDayRecordOut
 import com.jauschua.ironlogv2.data.api.dto.MuscleGroupSummaryOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.WeakPointAssessmentOut
 import com.jauschua.ironlogv2.ui.screens.today.GenerateOutcomeKind
 import com.jauschua.ironlogv2.ui.screens.today.classifyGenerate
 import com.jauschua.ironlogv2.ui.screens.today.hasCheckedInToday
+import com.jauschua.ironlogv2.ui.screens.today.missedDayBadgeCount
 import com.jauschua.ironlogv2.ui.screens.today.reviewButtonLabel
 import com.jauschua.ironlogv2.ui.screens.today.targetSummary
 import com.jauschua.ironlogv2.ui.screens.today.weakPointBadgeCount
@@ -91,6 +93,35 @@ class TodayLogicTest {
         assertEquals(3, weakPointBadgeCount(assessment))
     }
 
+    @Test fun missed_day_badge_count_with_empty_records_is_zero() {
+        assertEquals(0, missedDayBadgeCount(emptyList()))
+    }
+
+    @Test fun missed_day_badge_count_with_all_resolved_records_is_zero() {
+        assertEquals(
+            0,
+            missedDayBadgeCount(
+                listOf(
+                    missedDayRecord(id = 1, status = "RESOLVED"),
+                    missedDayRecord(id = 2, status = "RESOLVED"),
+                ),
+            ),
+        )
+    }
+
+    @Test fun missed_day_badge_count_counts_only_unresolved_records() {
+        assertEquals(
+            2,
+            missedDayBadgeCount(
+                listOf(
+                    missedDayRecord(id = 1, status = "PENDING"),
+                    missedDayRecord(id = 2, status = "RESOLVED"),
+                    missedDayRecord(id = 3, status = "ACKNOWLEDGED"),
+                ),
+            ),
+        )
+    }
+
     // HT (band-composite) sets carry target_plates/band_config/target_felt_peak and no
     // meaningful target_load — the preview must render the same "plates + bands · peak" line
     // Capture's SetCard shows, not a blank/raw target_load. Regression coverage for the bug this
@@ -111,4 +142,13 @@ class TodayLogicTest {
         )
         assertEquals("135.0 · 8 reps", targetSummary(set))
     }
+
+    private fun missedDayRecord(id: Int, status: String) = MissedDayRecordOut(
+        id = id,
+        program_day_id = id + 10,
+        day_role = "D$id",
+        week_start_date = "2026-07-20",
+        detected_at = "2026-07-23T12:00:00",
+        status = status,
+    )
 }

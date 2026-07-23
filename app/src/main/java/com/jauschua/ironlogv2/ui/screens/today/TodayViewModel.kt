@@ -11,12 +11,14 @@ import com.jauschua.ironlogv2.data.api.IronLogException
 import com.jauschua.ironlogv2.data.api.dto.CardioWeeklySummaryOut
 import com.jauschua.ironlogv2.data.api.dto.DailyReadinessIn
 import com.jauschua.ironlogv2.data.api.dto.DailyReadinessOut
+import com.jauschua.ironlogv2.data.api.dto.MissedDayRecordOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.api.dto.WeakPointAssessmentOut
 import com.jauschua.ironlogv2.data.api.humanMessage
 import com.jauschua.ironlogv2.data.repo.CardioLogRepo
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.data.repo.GenerateRepo
+import com.jauschua.ironlogv2.data.repo.MissedDaysRepo
 import com.jauschua.ironlogv2.data.repo.NotesRepo
 import com.jauschua.ironlogv2.data.repo.ReadinessRepo
 import com.jauschua.ironlogv2.data.repo.WeakPointsRepo
@@ -55,6 +57,11 @@ fun hasCheckedInToday(readiness: DailyReadinessOut?): Boolean =
 fun weakPointBadgeCount(assessment: WeakPointAssessmentOut?): Int =
     assessment?.muscle_groups?.sumOf { it.weak_count } ?: 0
 
+/** Count of missed-day records not yet resolved, for the Today badge. Pure and file-level so
+ *  it's unit-testable without Compose or the ViewModel. */
+fun missedDayBadgeCount(records: List<MissedDayRecordOut>): Int =
+    records.count { it.status != "RESOLVED" }
+
 /** Today tab state machine: pick a day (if none is already planned) → generate → review the
  *  preview → approve → hand off to Capture. */
 sealed interface TodayUiState {
@@ -73,6 +80,7 @@ class TodayViewModel(
     private val captureRepo: CaptureRepo,
     private val notesRepo: NotesRepo,
     private val cardioLogRepo: CardioLogRepo,
+    private val missedDaysRepo: MissedDaysRepo,
     private val readinessRepo: ReadinessRepo,
     private val weakPointsRepo: WeakPointsRepo,
     private val pendingPhaseTransitionContainerFlow: MutableStateFlow<String?>,
@@ -92,6 +100,9 @@ class TodayViewModel(
 
     private val _weakPointsSummary = MutableStateFlow<WeakPointAssessmentOut?>(null)
     val weakPointsSummary: StateFlow<WeakPointAssessmentOut?> = _weakPointsSummary.asStateFlow()
+
+    private val _missedDays = MutableStateFlow<List<MissedDayRecordOut>>(emptyList())
+    val missedDays: StateFlow<List<MissedDayRecordOut>> = _missedDays.asStateFlow()
 
     private val _pendingPhaseTransition = MutableStateFlow<String?>(null)
     val pendingPhaseTransition: StateFlow<String?> = _pendingPhaseTransition.asStateFlow()
@@ -119,6 +130,7 @@ class TodayViewModel(
         refreshCardioSummary()
         refreshReadiness()
         refreshWeakPoints()
+        refreshMissedDays()
     }
 
     /** Best-effort fetch of the pending-note count for the Review button badge. Leaves the count
@@ -148,6 +160,13 @@ class TodayViewModel(
         viewModelScope.launch {
             weakPointsRepo.assessment()
                 .onSuccess { a -> _weakPointsSummary.value = a }
+        }
+    }
+
+    private fun refreshMissedDays() {
+        viewModelScope.launch {
+            missedDaysRepo.list()
+                .onSuccess { records -> _missedDays.value = records }
         }
     }
 
@@ -225,6 +244,7 @@ class TodayViewModel(
                     captureRepo = app.container.captureRepo,
                     notesRepo = app.container.notesRepo,
                     cardioLogRepo = app.container.cardioLogRepo,
+                    missedDaysRepo = app.container.missedDaysRepo,
                     readinessRepo = app.container.readinessRepo,
                     weakPointsRepo = app.container.weakPointsRepo,
                     pendingPhaseTransitionContainerFlow = app.container.pendingPhaseTransition,

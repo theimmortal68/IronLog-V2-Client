@@ -63,6 +63,7 @@ fun TodayScreen(
     onReview: () -> Unit,
     onLogCardio: () -> Unit,
     onWeakPoints: () -> Unit,
+    onMissedDays: () -> Unit,
     vm: TodayViewModel = viewModel(factory = TodayViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -70,8 +71,10 @@ fun TodayScreen(
     val cardioSummary by vm.cardioWeeklySummary.collectAsStateWithLifecycle()
     val readiness by vm.readiness.collectAsStateWithLifecycle()
     val weakPointsSummary by vm.weakPointsSummary.collectAsStateWithLifecycle()
+    val missedDays by vm.missedDays.collectAsStateWithLifecycle()
     val pendingPhaseTransition by vm.pendingPhaseTransition.collectAsStateWithLifecycle()
     val weakPointCount = weakPointBadgeCount(weakPointsSummary)
+    val missedDayCount = missedDayBadgeCount(missedDays)
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -119,6 +122,17 @@ fun TodayScreen(
                     ) {
                         Text(
                             "Weak points: $weakPointCount flagged",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+                if (missedDayCount > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp).clickable(onClick = onMissedDays),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "Missed workouts: $missedDayCount",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
