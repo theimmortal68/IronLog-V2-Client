@@ -146,12 +146,10 @@ class TodayViewModel(
 
     fun confirmPhaseTransition() {
         val phase = _pendingPhaseTransition.value ?: return
+        _pendingPhaseTransition.value = null
+        pendingPhaseTransitionContainerFlow.value = null
         viewModelScope.launch {
             readinessRepo.confirmPhase(phase)
-                .onSuccess {
-                    _pendingPhaseTransition.value = null
-                    pendingPhaseTransitionContainerFlow.value = null
-                }
         }
     }
 

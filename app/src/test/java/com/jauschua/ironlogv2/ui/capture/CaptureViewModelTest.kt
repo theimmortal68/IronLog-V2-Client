@@ -167,12 +167,15 @@ class CaptureViewModelTest {
     @Test
     fun finish_captures_phase_transition_available_and_overwrites_pending_flow() = runBlocking {
         var submitCount = 0
-        val phases = listOf("STAB", "REBUILD")
         val engine = MockEngine {
-            val phase = phases[submitCount.coerceAtMost(phases.lastIndex)]
+            val phaseJson = when (submitCount) {
+                0 -> "\"STAB\""
+                1 -> "\"REBUILD\""
+                else -> "null"
+            }
             submitCount += 1
             respond(
-                """{"session_id":7,"status":"COMPLETED","set_logs_written":1,"already_completed":false,"phase_transition_available":"$phase"}""",
+                """{"session_id":7,"status":"COMPLETED","set_logs_written":1,"already_completed":false,"phase_transition_available":$phaseJson}""",
                 HttpStatusCode.OK,
                 headersOf(HttpHeaders.ContentType, "application/json"),
             )
@@ -192,6 +195,9 @@ class CaptureViewModelTest {
         vm.finish()
         assertEquals("COMPLETED", vm.submitResult.value)
         assertEquals("STAB", pendingPhaseTransition.value)
+
+        vm.finish()
+        assertEquals("REBUILD", pendingPhaseTransition.value)
 
         vm.finish()
         assertEquals("REBUILD", pendingPhaseTransition.value)
