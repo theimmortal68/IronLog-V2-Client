@@ -1,8 +1,10 @@
 package com.jauschua.ironlogv2.ui.today
 
+import com.jauschua.ironlogv2.data.api.dto.DailyReadinessOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.ui.screens.today.GenerateOutcomeKind
 import com.jauschua.ironlogv2.ui.screens.today.classifyGenerate
+import com.jauschua.ironlogv2.ui.screens.today.hasCheckedInToday
 import com.jauschua.ironlogv2.ui.screens.today.reviewButtonLabel
 import com.jauschua.ironlogv2.ui.screens.today.targetSummary
 import org.junit.Assert.assertEquals
@@ -27,6 +29,31 @@ class TodayLogicTest {
     }
     @Test fun review_label_with_single_pending_shows_badge() {
         assertEquals("Review (1)", reviewButtonLabel(1))
+    }
+
+    @Test fun readiness_without_a_row_is_not_checked_in() {
+        assertEquals(false, hasCheckedInToday(null))
+    }
+
+    @Test fun readiness_with_missing_subjective_field_is_not_checked_in() {
+        val readiness = DailyReadinessOut(
+            date = "2026-07-23",
+            bodyweight = 216.68,
+            sleep_ok = true,
+            subjective_ok = null,
+        )
+        assertEquals(false, hasCheckedInToday(readiness))
+    }
+
+    @Test fun readiness_with_both_subjective_fields_answered_is_checked_in() {
+        val readiness = DailyReadinessOut(
+            date = "2026-07-23",
+            bodyweight = null,
+            resting_hr = null,
+            sleep_ok = false,
+            subjective_ok = true,
+        )
+        assertEquals(true, hasCheckedInToday(readiness))
     }
 
     // HT (band-composite) sets carry target_plates/band_config/target_felt_peak and no

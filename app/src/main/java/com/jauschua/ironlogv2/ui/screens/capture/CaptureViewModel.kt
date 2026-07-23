@@ -105,6 +105,7 @@ class CaptureViewModel(
     private var sessionId: Int,
     private val restTimerController: RestTimerController = InMemoryRestTimerController(),
     val intervalTimerController: IntervalTimerController = InMemoryIntervalTimerController(),
+    private val pendingPhaseTransition: MutableStateFlow<String?> = MutableStateFlow(null),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<SessionDetailResponse?>>(UiState.Loading)
@@ -527,7 +528,12 @@ class CaptureViewModel(
     suspend fun finish(sessionNote: String? = null) {
         repo.saveSessionNote(sessionId, sessionNote)
         repo.submit(sessionId)
-            .onSuccess { _submitResult.value = it.status }
+            .onSuccess {
+                _submitResult.value = it.status
+                if (it.phase_transition_available != null) {
+                    pendingPhaseTransition.value = it.phase_transition_available
+                }
+            }
             .onFailure { _submitResult.value = "RETRY" }
     }
 
@@ -545,6 +551,7 @@ class CaptureViewModel(
                     sessionId = 0,
                     restTimerController = AndroidRestTimerController(app.applicationContext),
                     intervalTimerController = AndroidIntervalTimerController(app.applicationContext),
+                    pendingPhaseTransition = app.container.pendingPhaseTransition,
                 )
             }
         }
@@ -559,6 +566,7 @@ class CaptureViewModel(
                     sessionId = sessionId,
                     restTimerController = AndroidRestTimerController(app.applicationContext),
                     intervalTimerController = AndroidIntervalTimerController(app.applicationContext),
+                    pendingPhaseTransition = app.container.pendingPhaseTransition,
                 )
             }
         }

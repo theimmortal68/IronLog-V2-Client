@@ -13,14 +13,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,9 +38,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.jauschua.ironlogv2.data.api.dto.DailyReadinessOut
 import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
@@ -60,6 +67,8 @@ fun TodayScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val reviewCount by vm.reviewCount.collectAsStateWithLifecycle()
     val cardioSummary by vm.cardioWeeklySummary.collectAsStateWithLifecycle()
+    val readiness by vm.readiness.collectAsStateWithLifecycle()
+    val pendingPhaseTransition by vm.pendingPhaseTransition.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -76,6 +85,19 @@ fun TodayScreen(
     ) { inner ->
         Surface(modifier = Modifier.fillMaxSize().padding(inner)) {
             Column(modifier = Modifier.fillMaxSize()) {
+                pendingPhaseTransition?.let { phase ->
+                    PhaseTransitionBanner(
+                        phase = phase,
+                        onConfirm = { vm.confirmPhaseTransition() },
+                        onDismiss = { vm.dismissPhaseTransitionBanner() },
+                    )
+                }
+                ReadinessCheckInCard(
+                    readiness = readiness,
+                    onCheckIn = { sleepOk, subjectiveOk, restingHr ->
+                        vm.checkIn(sleepOk, subjectiveOk, restingHr)
+                    },
+                )
                 cardioSummary?.let { summary ->
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(12.dp).clickable(onClick = onLogCardio),
@@ -107,6 +129,146 @@ fun TodayScreen(
         }
     }
 }
+
+@Composable
+private fun PhaseTransitionBanner(
+    phase: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Ready to move to $phase -- Confirm?", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text("Dismiss")
+                }
+                Button(onClick = onConfirm, modifier = Modifier.weight(1f)) {
+                    Text("Confirm")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadinessCheckInCard(
+    readiness: DailyReadinessOut?,
+    onCheckIn: (Boolean?, Boolean?, Double?) -> Unit,
+) {
+    val checkedIn = hasCheckedInToday(readiness)
+    var expanded by remember(readiness?.date, checkedIn) { mutableStateOf(!checkedIn) }
+    var sleepOk by remember(readiness?.date, readiness?.sleep_ok) { mutableStateOf(readiness?.sleep_ok) }
+    var subjectiveOk by remember(readiness?.date, readiness?.subjective_ok) {
+        mutableStateOf(readiness?.subjective_ok)
+    }
+    var restingHr by remember(readiness?.date, readiness?.resting_hr) {
+        mutableStateOf(readiness?.resting_hr?.let(::formatReadinessNumber).orEmpty())
+    }
+    val restingHrTrimmed = restingHr.trim()
+    val parsedRestingHr = if (restingHrTrimmed.isEmpty()) null else restingHrTrimmed.toDoubleOrNull()
+    val restingHrValid = restingHrTrimmed.isEmpty() || parsedRestingHr != null
+
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Readiness", style = MaterialTheme.typography.titleMedium)
+                    readiness?.date?.let { date ->
+                        Text(date, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (checkedIn && !expanded) {
+                    TextButton(onClick = { expanded = true }) { Text("Update") }
+                }
+            }
+
+            if (checkedIn && !expanded) {
+                Text(readinessSummary(readiness), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(readinessSummary(readiness), style = MaterialTheme.typography.bodyMedium)
+                ReadinessChoiceRow(
+                    label = "Sleep ok",
+                    value = sleepOk,
+                    onValueChange = { sleepOk = it },
+                )
+                ReadinessChoiceRow(
+                    label = "Feel ok",
+                    value = subjectiveOk,
+                    onValueChange = { subjectiveOk = it },
+                )
+                OutlinedTextField(
+                    value = restingHr,
+                    onValueChange = { restingHr = it },
+                    label = { Text("Resting HR") },
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = !restingHrValid,
+                    singleLine = true,
+                )
+                Button(
+                    onClick = { onCheckIn(sleepOk, subjectiveOk, parsedRestingHr) },
+                    enabled = restingHrValid,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Check in")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReadinessChoiceRow(
+    label: String,
+    value: Boolean?,
+    onValueChange: (Boolean?) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            val options = listOf(null to "Unset", true to "Yes", false to "No")
+            options.forEachIndexed { index, option ->
+                SegmentedButton(
+                    selected = value == option.first,
+                    onClick = { onValueChange(option.first) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                ) {
+                    Text(option.second)
+                }
+            }
+        }
+    }
+}
+
+private fun readinessSummary(readiness: DailyReadinessOut?): String {
+    val parts = mutableListOf<String>()
+    readiness?.bodyweight?.let { parts += "BW ${formatReadinessNumber(it)}" }
+    readiness?.resting_hr?.let { parts += "RHR ${formatReadinessNumber(it)}" }
+    readiness?.sleep_ok?.let { parts += "Sleep ${readinessYesNo(it)}" }
+    readiness?.subjective_ok?.let { parts += "Feel ${readinessYesNo(it)}" }
+    return if (parts.isEmpty()) "No check-in yet" else parts.joinToString(" · ")
+}
+
+private fun readinessYesNo(value: Boolean): String =
+    if (value) "yes" else "no"
+
+private fun formatReadinessNumber(value: Double): String =
+    if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
 
 @Composable
 private fun Centered(content: @Composable () -> Unit) {

@@ -22,6 +22,7 @@ import kotlinx.serialization.json.JsonObject
 )
 @Serializable data class SubmitResponse(
     val session_id: Int, val status: String, val set_logs_written: Int, val already_completed: Boolean,
+    val phase_transition_available: String? = null,
 )
 @Serializable data class PlannedSetOut(
     val id: Int, val set_index: Int, val set_role: String, val is_warmup: Boolean,
