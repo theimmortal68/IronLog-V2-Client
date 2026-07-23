@@ -13,6 +13,7 @@ object Routes {
     const val REVIEW = "review"
     const val CARDIO_LOG = "cardio-log"
     const val CARDIO_HISTORY = "cardio-history"
+    const val WEAK_POINTS = "weak-points"
 
     /** Phase 1's program for the first-run wizard (beta has a single program). */
     const val DEFAULT_PROGRAM_ID = 1

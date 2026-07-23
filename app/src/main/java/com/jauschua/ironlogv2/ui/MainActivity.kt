@@ -43,6 +43,7 @@ import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
 import com.jauschua.ironlogv2.ui.screens.review.ReviewScreen
 import com.jauschua.ironlogv2.ui.screens.today.TodayScreen
+import com.jauschua.ironlogv2.ui.screens.weakpoints.WeakPointsScreen
 import com.jauschua.ironlogv2.ui.screens.wizard.WizardScreen
 import com.jauschua.ironlogv2.ui.theme.IronLogV2Theme
 
@@ -119,6 +120,7 @@ private fun RootScaffold() {
                     onHistory = { nav.navigate(Routes.HISTORY) },
                     onReview = { nav.navigate(Routes.REVIEW) },
                     onLogCardio = { nav.navigate(Routes.CARDIO_LOG) },
+                    onWeakPoints = { nav.navigate(Routes.WEAK_POINTS) },
                 )
             }
             composable(Routes.MOVEMENTS) {
@@ -192,6 +194,9 @@ private fun RootScaffold() {
             }
             composable(Routes.CARDIO_HISTORY) {
                 CardioHistoryScreen(onBack = { nav.popBackStack() })
+            }
+            composable(Routes.WEAK_POINTS) {
+                WeakPointsScreen(onBack = { nav.popBackStack() })
             }
         }
     }

@@ -62,13 +62,16 @@ fun TodayScreen(
     onHistory: () -> Unit,
     onReview: () -> Unit,
     onLogCardio: () -> Unit,
+    onWeakPoints: () -> Unit,
     vm: TodayViewModel = viewModel(factory = TodayViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val reviewCount by vm.reviewCount.collectAsStateWithLifecycle()
     val cardioSummary by vm.cardioWeeklySummary.collectAsStateWithLifecycle()
     val readiness by vm.readiness.collectAsStateWithLifecycle()
+    val weakPointsSummary by vm.weakPointsSummary.collectAsStateWithLifecycle()
     val pendingPhaseTransition by vm.pendingPhaseTransition.collectAsStateWithLifecycle()
+    val weakPointCount = weakPointBadgeCount(weakPointsSummary)
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -105,6 +108,17 @@ fun TodayScreen(
                     ) {
                         Text(
                             "🏃 Cardio: ${summary.count}/${summary.target} this week",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+                if (weakPointCount > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp).clickable(onClick = onWeakPoints),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "Weak points: $weakPointCount flagged",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
