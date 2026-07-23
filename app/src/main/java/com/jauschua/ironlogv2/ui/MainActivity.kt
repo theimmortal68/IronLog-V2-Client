@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material.icons.filled.Tune
@@ -43,6 +44,7 @@ import com.jauschua.ironlogv2.ui.screens.movement_detail.MovementDetailScreen
 import com.jauschua.ironlogv2.ui.screens.autoregulate.AutoregulateScreen
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListScreen
 import com.jauschua.ironlogv2.ui.screens.review.ReviewScreen
+import com.jauschua.ironlogv2.ui.screens.settings.SettingsScreen
 import com.jauschua.ironlogv2.ui.screens.today.TodayScreen
 import com.jauschua.ironlogv2.ui.screens.weakpoints.WeakPointsScreen
 import com.jauschua.ironlogv2.ui.screens.wizard.WizardScreen
@@ -74,6 +76,7 @@ private val TABS = listOf(
     Tab(Routes.AUTOREGULATE, "Autoregulate", Icons.Filled.Calculate),
     Tab(Routes.CAPTURE, "Capture", Icons.Filled.PlayArrow),
     Tab(Routes.WIZARD, "Setup", Icons.Filled.Tune, navTarget = Routes.wizard()),
+    Tab(Routes.SETTINGS, "Settings", Icons.Filled.Settings),
 )
 
 @Composable
@@ -149,6 +152,7 @@ private fun RootScaffold() {
             composable(Routes.BANDS) { BandsScreen() }
             composable(Routes.AUTOREGULATE) { AutoregulateScreen() }
             composable(Routes.CAPTURE) { CaptureScreen() }
+            composable(Routes.SETTINGS) { SettingsScreen() }
             composable(
                 route = Routes.WIZARD,
                 arguments = listOf(

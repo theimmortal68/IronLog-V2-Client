@@ -9,6 +9,7 @@ import com.jauschua.ironlogv2.data.repo.AutoregRepo
 import com.jauschua.ironlogv2.data.repo.CardioLogRepo
 import com.jauschua.ironlogv2.data.repo.CaptureRepo
 import com.jauschua.ironlogv2.data.repo.GenerateRepo
+import com.jauschua.ironlogv2.data.repo.GoalsRepo
 import com.jauschua.ironlogv2.data.repo.LibraryRepo
 import com.jauschua.ironlogv2.data.repo.MissedDaysRepo
 import com.jauschua.ironlogv2.data.repo.NotesRepo
@@ -25,6 +26,7 @@ class AppContainer(private val appContext: Context) {
     val generateRepo: GenerateRepo by lazy { GenerateRepo(apiClient) }
     val notesRepo: NotesRepo by lazy { NotesRepo(apiClient) }
     val cardioLogRepo: CardioLogRepo by lazy { CardioLogRepo(apiClient) }
+    val goalsRepo: GoalsRepo by lazy { GoalsRepo(apiClient) }
     val missedDaysRepo: MissedDaysRepo by lazy { MissedDaysRepo(apiClient) }
     val weakPointsRepo: WeakPointsRepo by lazy { WeakPointsRepo(apiClient) }
     val readinessRepo: ReadinessRepo by lazy { ReadinessRepo(apiClient) }
