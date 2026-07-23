@@ -12,6 +12,7 @@ import com.jauschua.ironlogv2.data.repo.GenerateRepo
 import com.jauschua.ironlogv2.data.repo.LibraryRepo
 import com.jauschua.ironlogv2.data.repo.NotesRepo
 import com.jauschua.ironlogv2.data.repo.ReadinessRepo
+import com.jauschua.ironlogv2.data.repo.WeakPointsRepo
 import com.jauschua.ironlogv2.data.repo.WizardRepo
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -23,6 +24,7 @@ class AppContainer(private val appContext: Context) {
     val generateRepo: GenerateRepo by lazy { GenerateRepo(apiClient) }
     val notesRepo: NotesRepo by lazy { NotesRepo(apiClient) }
     val cardioLogRepo: CardioLogRepo by lazy { CardioLogRepo(apiClient) }
+    val weakPointsRepo: WeakPointsRepo by lazy { WeakPointsRepo(apiClient) }
     val readinessRepo: ReadinessRepo by lazy { ReadinessRepo(apiClient) }
     val captureDb: CaptureDatabase by lazy {
         Room.databaseBuilder(appContext, CaptureDatabase::class.java, "capture.db")

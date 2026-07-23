@@ -1,12 +1,15 @@
 package com.jauschua.ironlogv2.ui.today
 
 import com.jauschua.ironlogv2.data.api.dto.DailyReadinessOut
+import com.jauschua.ironlogv2.data.api.dto.MuscleGroupSummaryOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
+import com.jauschua.ironlogv2.data.api.dto.WeakPointAssessmentOut
 import com.jauschua.ironlogv2.ui.screens.today.GenerateOutcomeKind
 import com.jauschua.ironlogv2.ui.screens.today.classifyGenerate
 import com.jauschua.ironlogv2.ui.screens.today.hasCheckedInToday
 import com.jauschua.ironlogv2.ui.screens.today.reviewButtonLabel
 import com.jauschua.ironlogv2.ui.screens.today.targetSummary
+import com.jauschua.ironlogv2.ui.screens.today.weakPointBadgeCount
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -54,6 +57,38 @@ class TodayLogicTest {
             subjective_ok = true,
         )
         assertEquals(true, hasCheckedInToday(readiness))
+    }
+
+    @Test fun weak_point_badge_count_without_assessment_is_zero() {
+        assertEquals(0, weakPointBadgeCount(null))
+    }
+
+    @Test fun weak_point_badge_count_with_empty_groups_is_zero() {
+        val assessment = WeakPointAssessmentOut(muscle_groups = emptyList(), movements = emptyList())
+        assertEquals(0, weakPointBadgeCount(assessment))
+    }
+
+    @Test fun weak_point_badge_count_with_all_zero_groups_is_zero() {
+        val assessment = WeakPointAssessmentOut(
+            muscle_groups = listOf(
+                MuscleGroupSummaryOut("ABS", weak_count = 0, total_count = 2, weak_movements = emptyList()),
+                MuscleGroupSummaryOut("QUADS", weak_count = 0, total_count = 4, weak_movements = emptyList()),
+            ),
+            movements = emptyList(),
+        )
+        assertEquals(0, weakPointBadgeCount(assessment))
+    }
+
+    @Test fun weak_point_badge_count_sums_mixed_groups() {
+        val assessment = WeakPointAssessmentOut(
+            muscle_groups = listOf(
+                MuscleGroupSummaryOut("ABS", weak_count = 1, total_count = 2, weak_movements = emptyList()),
+                MuscleGroupSummaryOut("QUADS", weak_count = 0, total_count = 4, weak_movements = emptyList()),
+                MuscleGroupSummaryOut("HAMSTRINGS", weak_count = 2, total_count = 3, weak_movements = emptyList()),
+            ),
+            movements = emptyList(),
+        )
+        assertEquals(3, weakPointBadgeCount(assessment))
     }
 
     // HT (band-composite) sets carry target_plates/band_config/target_felt_peak and no
