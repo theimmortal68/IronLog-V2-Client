@@ -164,6 +164,46 @@ class CaptureViewModelTest {
         )
     }
 
+    @Test
+    fun finish_captures_phase_transition_available_and_overwrites_pending_flow() = runBlocking {
+        var submitCount = 0
+        val engine = MockEngine {
+            val phaseJson = when (submitCount) {
+                0 -> "\"STAB\""
+                1 -> "\"REBUILD\""
+                else -> "null"
+            }
+            submitCount += 1
+            respond(
+                """{"session_id":7,"status":"COMPLETED","set_logs_written":1,"already_completed":false,"phase_transition_available":$phaseJson}""",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext<Context>(),
+            CaptureDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val repo = CaptureRepo(ApiClient(engine = engine), db.captureDao())
+        val pendingPhaseTransition = MutableStateFlow<String?>(null)
+        val vm = CaptureViewModel(
+            repo = repo,
+            sessionId = 7,
+            pendingPhaseTransition = pendingPhaseTransition,
+        )
+
+        vm.finish()
+        assertEquals("COMPLETED", vm.submitResult.value)
+        assertEquals("STAB", pendingPhaseTransition.value)
+
+        vm.finish()
+        assertEquals("REBUILD", pendingPhaseTransition.value)
+
+        vm.finish()
+        assertEquals("REBUILD", pendingPhaseTransition.value)
+        db.close()
+    }
+
     // ── Gate #2 — mandatory-tap rejection ────────────────────────────────────────────────
 
     /** Working set without a tap is rejected — no Room write, no advance. */
