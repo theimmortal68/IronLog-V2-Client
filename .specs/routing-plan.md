@@ -140,3 +140,20 @@ Notes:
 
 Delegation ratio: 1/1 (100%)
 Merge order: wt-35 standalone. No HUMAN GATE (no Forbidden-list hit).
+
+## 2026-07-23 batch: Phase-1 client parity (design approved via brainstorming, docs/superpowers/specs/2026-07-23-phase1-client-parity-design.md)
+
+Four server features shipped over the past week with zero client visibility: daily readiness + phase-gate confirmation, weak-point assessment, missed-workout handling, and goal-driven phase thresholds. One combined design doc (not four separate brainstorming cycles) since all four share the identical shape already established this session (Today-rollup StateFlow + a repo mirroring CardioLogRepo + a detail screen pushed from Today).
+
+- .specs/36-readiness-checkin-phase-gate.md → codex, worktree wt-36, depends on: none. New `ReadinessRepo`/DTOs, a check-in card on Today, a phase-transition-confirmation banner driven by `SubmitResponse.phase_transition_available` (a field the client's DTO doesn't even declare yet — a real gap, not just an unused field). Touches `CaptureViewModel.kt` (new constructor param) in addition to the usual `TodayViewModel.kt`/`AppContainer.kt`.
+- .specs/37-weak-points-display.md → codex, worktree wt-37, depends on: 36 merged (shared-file sequencing, not a data dependency — see below). New `WeakPointsRepo`/DTOs, Today rollup badge, muscle-group-grouped detail screen.
+- .specs/38-missed-days-display.md → codex, worktree wt-38, depends on: 37 merged (same reason). New `MissedDaysRepo`/DTOs, Today rollup badge, detail screen with acknowledge/reschedule actions (full parity with the server's write endpoints, per the user's choice — not display-only).
+- .specs/39-goals-settings-screen.md → codex, worktree wt-39, depends on: 38 merged (same reason). New `GoalsRepo`/DTOs, a new 7th bottom-nav tab ("Settings") housing a Goals view/edit form.
+
+Delegation ratio: 4/4 (100%)
+Merge order: 36 → 37 → 38 → 39 — strictly sequential, not parallel-then-serial-merge. All four touch `TodayViewModel.kt`/`TodayScreen.kt`/`AppContainer.kt` for their own rollup/route wiring (36 additionally touches `CaptureViewModel.kt`; 39 additionally touches `MainActivity.kt`'s `TABS` list) — no data dependency between the four features themselves, but concurrent generation would race the same shared files, mirroring this repo's own established call on the cardio-log batch (31→32→33→34, sequential for the identical reason).
+
+Notes:
+- No HUMAN GATE anywhere in this batch — pure client UI/data-layer work, no schema/auth/build-logic/public-API-surface changes (all four server-side surfaces are already finalized and live).
+- Review routing: spec 36 touches a cross-screen state bridge (`AppContainer.pendingPhaseTransition`, mirroring the existing `autoregPrefill` pattern) and a `CaptureViewModel` constructor change on a screen with this session's own carry-forward-bug history — route through Opus review, not review-exempt. Specs 37/38/39 are closer to the cardio-log batch's own shape (repo/DTOs + a display screen, one with write actions) — use judgment at dispatch time based on the actual diff, default to reviewing anything with non-trivial logic (spec 39's `buildGoalSettingsUpdate` validation function especially, given its direct lineage from spec 32/35's own review history).
+- Two open questions flagged directly in the specs themselves for the implementer to resolve against the real server code before finalizing (not left as guesses): whether `POST /goals`'s partial-upsert treats an explicit JSON `null` differently from an omitted field (spec 39), and whether Ktor's `.body<GoalSettingsOut?>()` cleanly deserializes a bare `null` response (spec 39).
