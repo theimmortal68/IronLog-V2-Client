@@ -228,12 +228,23 @@ private fun SessionContent(
     }
     LaunchedEffect(currentPlannedSetId, currentExercise?.movement_id) {
         if (currentPlannedSetId != null) {
-            setReps = effectiveRepsPrefill(
+            val resolved = effectiveRepsPrefill(
                 carriedRepsByMovement,
                 currentExercise?.movement_id ?: -1,
                 currentSet,
                 repsPlanIsFlat,
             )
+            // TEMP diagnostic logging (mirrors the "CarryFwd" load diagnostic, spec 13
+            // follow-up) for the still-unconfirmed reps carry-forward report — remove
+            // once the root cause is pinned down and the fix is confirmed on-device.
+            // Filter logcat on "CarryFwd".
+            Log.d(
+                "CarryFwd",
+                "REPS cursor=$currentPlannedSetId movement=${currentExercise?.movement_id} " +
+                    "carried=${currentExercise?.movement_id?.let { carriedRepsByMovement[it] }} " +
+                    "planIsFlat=$repsPlanIsFlat resolved=$resolved",
+            )
+            setReps = resolved
         }
     }
     var selectedTap by remember(currentPlannedSetId) { mutableStateOf<String?>(null) }
@@ -515,6 +526,10 @@ private fun SessionContent(
                                             currentExercise?.let { ex ->
                                                 carriedRepsByMovement =
                                                     withCarriedReps(carriedRepsByMovement, ex.movement_id, it.toIntOrNull())
+                                                Log.d(
+                                                    "CarryFwd",
+                                                    "REPS WRITE cursor=$currentPlannedSetId movement=${ex.movement_id} value=$it",
+                                                )
                                             }
                                         },
                                         onTapSelect = { selectedTap = it },
