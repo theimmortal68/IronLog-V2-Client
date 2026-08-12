@@ -396,7 +396,7 @@ private fun ReadOnlyGroupCard(gi: Int, group: GroupOut) {
                 style = MaterialTheme.typography.titleMedium,
             )
             if (group.group_type == "GIANT_SET") {
-                for (round in 0 until (group.rounds ?: 1)) {
+                for (round in 0 until group.rounds) {
                     group.exercises.forEachIndexed { ei, exercise ->
                         val set = exercise.planned_sets.getOrNull(round) ?: return@forEachIndexed
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

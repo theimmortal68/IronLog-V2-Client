@@ -459,7 +459,7 @@ private fun SessionContent(
                 if (expanded) {
                     if (group.group_type == "GIANT_SET") {
                         val emittedHtForExercise = mutableSetOf<Int>()
-                        val rounds = group.rounds ?: 1
+                        val rounds = group.rounds
                         for (round in 0 until rounds) {
                             group.exercises.forEachIndexed { ei, exercise ->
                                 val plannedSet = exercise.planned_sets.getOrNull(round) ?: return@forEachIndexed
