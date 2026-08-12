@@ -395,8 +395,20 @@ private fun ReadOnlyGroupCard(gi: Int, group: GroupOut) {
                 text = group.label ?: group.group_type,
                 style = MaterialTheme.typography.titleMedium,
             )
-            group.exercises.forEachIndexed { ei, exercise ->
-                ReadOnlyExerciseBlock(gi, ei, exercise)
+            if (group.group_type == "GIANT_SET") {
+                for (round in 0 until (group.rounds ?: 1)) {
+                    group.exercises.forEachIndexed { ei, exercise ->
+                        val set = exercise.planned_sets.getOrNull(round) ?: return@forEachIndexed
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(displayMovementName(exercise.movement_name), style = MaterialTheme.typography.bodyLarge)
+                            ReadOnlySetRow(gi, ei, round, set)
+                        }
+                    }
+                }
+            } else {
+                group.exercises.forEachIndexed { ei, exercise ->
+                    ReadOnlyExerciseBlock(gi, ei, exercise)
+                }
             }
         }
     }
