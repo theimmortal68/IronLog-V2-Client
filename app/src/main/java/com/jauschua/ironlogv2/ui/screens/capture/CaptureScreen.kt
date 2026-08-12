@@ -437,12 +437,9 @@ private fun SessionContent(
                     }
                 }
 
+                // Pre-compute HT setup for all exercises to maintain sequential `prevHtSetup`
+                val reconfigureTexts = mutableMapOf<Int, String?>()
                 group.exercises.forEachIndexed { ei, exercise ->
-                    // HT setup for this exercise, if any — the first planned set carrying
-                    // target_plates/band_config (all planned sets in an HT exercise share the
-                    // same prescribed setup, so the first is representative). Tracked BEFORE the
-                    // `if (expanded)` gate below so prevHtSetup stays correct across collapsed
-                    // groups too.
                     val htSet = exercise.planned_sets.firstOrNull {
                         it.target_plates != null || it.band_config != null
                     }
@@ -452,34 +449,173 @@ private fun SessionContent(
                         }
                     }
                     if (htSet != null) {
-                        // Always update, whether or not the banner fired, so the NEXT HT
-                        // exercise compares against THIS one.
                         prevHtSetup = htSet.target_plates to htSet.band_config
                     }
+                    if (reconfigureText != null) {
+                        reconfigureTexts[ei] = reconfigureText
+                    }
+                }
 
-                    if (expanded) {
-                        if (reconfigureText != null) {
-                            itemKeys.add("ht-reconfigure-$gi-$ei")
-                            item(key = "ht-reconfigure-$gi-$ei") {
-                                Text(
-                                    text = reconfigureText,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(top = 12.dp),
-                                )
+                if (expanded) {
+                    if (group.group_type == "GIANT_SET") {
+                        val emittedHtForExercise = mutableSetOf<Int>()
+                        val rounds = group.rounds
+                        for (round in 0 until rounds) {
+                            group.exercises.forEachIndexed { ei, exercise ->
+                                val plannedSet = exercise.planned_sets.getOrNull(round) ?: return@forEachIndexed
+
+                                val reconfigureText = reconfigureTexts[ei]
+                                if (reconfigureText != null && !emittedHtForExercise.contains(ei)) {
+                                    emittedHtForExercise.add(ei)
+                                    itemKeys.add("ht-reconfigure-$gi-$ei")
+                                    item(key = "ht-reconfigure-$gi-$ei") {
+                                        Text(
+                                            text = reconfigureText,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(top = 12.dp),
+                                        )
+                                    }
+                                }
+
+                            val isCurrent = plannedSet.id == currentPlannedSetId
+                            val isPast = plannedSet.id in pastIds
+                            val tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")
+
+                            val sideIndexes = if (exercise.unilateral && isPast) listOf(0, 1) else listOf(0)
+                            sideIndexes.forEach { sideIndex ->
+                                val itemKey = if (exercise.unilateral && isPast) {
+                                    "set-${plannedSet.id}-side-$sideIndex"
+                                } else {
+                                    "set-${plannedSet.id}"
+                                }
+                                itemKeys.add(itemKey)
+                                item(key = itemKey) {
+                                    Column {
+                                        if (sideIndex == 0) {
+                                            Text(
+                                                text = displayMovementName(exercise.movement_name),
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                modifier = Modifier.padding(start = 8.dp)
+                                            )
+                                        }
+                                    val setKey = plannedSet.id to sideIndex
+                                    val editable = isSetEditable(isPast, exercise.unilateral)
+                                    val isEditing = editable && editingSetKey == setKey
+                                    SetCard(
+                                        plannedSet = plannedSet,
+                                        unilateral = exercise.unilateral,
+                                        unitHint = exercise.unit_hint,
+                                        sideLabel = if (exercise.unilateral && isPast) "Side ${sideIndex + 1}" else null,
+                                        isCurrent = isCurrent,
+                                        isPast = isPast,
+                                        tapRequired = tapRequired,
+                                        setLoad = if (isCurrent) setLoad else "",
+                                        setReps = if (isCurrent) setReps else "",
+                                        selectedTap = if (isCurrent) selectedTap else null,
+                                        setFeltPeak = if (isCurrent) setFeltPeak else "",
+                                        onLoadChange = {
+                                            setLoad = it
+                                            currentExercise?.let { ex ->
+                                                carriedLoadByMovement =
+                                                    withCarriedLoad(carriedLoadByMovement, ex.movement_id, it.toDoubleOrNull())
+                                                // TEMP diagnostic logging (spec 13 follow-up), see the
+                                                // matching read-side log in the LaunchedEffect above.
+                                                Log.d(
+                                                    "CarryFwd",
+                                                    "WRITE cursor=$currentPlannedSetId movement=${ex.movement_id} value=$it",
+                                                )
+                                            }
+                                        },
+                                        onRepsChange = {
+                                            setReps = it
+                                            currentExercise?.let { ex ->
+                                                carriedRepsByMovement =
+                                                    withCarriedReps(carriedRepsByMovement, ex.movement_id, it.toIntOrNull())
+                                                Log.d(
+                                                    "CarryFwd",
+                                                    "REPS WRITE cursor=$currentPlannedSetId movement=${ex.movement_id} value=$it",
+                                                )
+                                            }
+                                        },
+                                        onTapSelect = { selectedTap = it },
+                                        onFeltPeakChange = { setFeltPeak = it },
+                                        onLogSet = {
+                                            scope.launch {
+                                                vm.logWorkingSet(
+                                                    plannedSetId = plannedSet.id,
+                                                    movementId = exercise.movement_id,
+                                                    setIndex = plannedSet.set_index,
+                                                    setRole = plannedSet.set_role,
+                                                    actualLoad = setLoad.toDoubleOrNull(),
+                                                    actualReps = setReps.toIntOrNull(),
+                                                    tap = selectedTap,
+                                                    isWarmup = plannedSet.is_warmup,
+                                                    feltPeak = setFeltPeak.toDoubleOrNull(),
+                                                )
+                                            }
+                                        },
+                                        // Fix B — logged sets show actuals and stay editable.
+                                        loggedActual = loggedSetActuals[setKey],
+                                        isEditing = isEditing,
+                                        editLoad = if (isEditing) editLoad else "",
+                                        editReps = if (isEditing) editReps else "",
+                                        editTap = if (isEditing) editTap else null,
+                                        onCardTap = {
+                                            if (editable) {
+                                                editingSetKey = if (editingSetKey == setKey) null else setKey
+                                            }
+                                        },
+                                        onEditLoadChange = { editLoad = it },
+                                        onEditRepsChange = { editReps = it },
+                                        onEditTapSelect = { editTap = it },
+                                        onSaveEdit = {
+                                            scope.launch {
+                                                vm.editLoggedSet(
+                                                    plannedSetId = plannedSet.id,
+                                                    sideIndex = sideIndex,
+                                                    movementId = exercise.movement_id,
+                                                    setIndex = plannedSet.set_index,
+                                                    setRole = plannedSet.set_role,
+                                                    actualLoad = editLoad.toDoubleOrNull(),
+                                                    actualReps = editReps.toIntOrNull(),
+                                                    tap = editTap,
+                                                    isWarmup = plannedSet.is_warmup,
+                                                )
+                                                editingSetKey = null
+                                            }
+                                        },
+                                    )
+                                    }
+                                }
                             }
                         }
+                    }
+                    } else {
+                        group.exercises.forEachIndexed { ei, exercise ->
+                            val reconfigureText = reconfigureTexts[ei]
+                            if (reconfigureText != null) {
+                                itemKeys.add("ht-reconfigure-$gi-$ei")
+                                item(key = "ht-reconfigure-$gi-$ei") {
+                                    Text(
+                                        text = reconfigureText,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(top = 12.dp),
+                                    )
+                                }
+                            }
 
-                        itemKeys.add("ex-$gi-$ei")
-                        item(key = "ex-$gi-$ei") {
-                            Text(
-                                text = displayMovementName(exercise.movement_name),
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
+                            itemKeys.add("ex-$gi-$ei")
+                            item(key = "ex-$gi-$ei") {
+                                Text(
+                                    text = displayMovementName(exercise.movement_name),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
+                            }
 
-                        exercise.planned_sets.forEach { plannedSet ->
+                            exercise.planned_sets.forEach { plannedSet ->
                             val isCurrent = plannedSet.id == currentPlannedSetId
                             val isPast = plannedSet.id in pastIds
                             val tapRequired = plannedSet.set_role in setOf("WORKING", "TOP", "BACKOFF")
@@ -584,9 +720,9 @@ private fun SessionContent(
                             }
                         }
                     }
+                        }
+                    }
                 }
-            }
-
             session.finisher?.let { finisher ->
                 itemKeys.add("finisher")
                 item(key = "finisher") {
