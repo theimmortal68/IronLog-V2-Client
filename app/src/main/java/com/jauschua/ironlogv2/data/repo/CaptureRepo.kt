@@ -127,4 +127,21 @@ class CaptureRepo(private val apiClient: ApiClient, private val dao: CaptureDao)
             dao.insertNote(NoteDraft(sessionId = sessionId, movementId = null, text = trimmed))
         }
     }
+
+    suspend fun skipExercise(sessionId: Int, exerciseId: Int): Result<ExerciseOut> = runCatchingApi {
+        apiClient.http.post("/sessions/$sessionId/exercises/$exerciseId/skip").body()
+    }
+
+    suspend fun swapExercise(
+        sessionId: Int, exerciseId: Int, newMovementId: Int, makePermanent: Boolean,
+    ): Result<ExerciseOut> = runCatchingApi {
+        apiClient.http.post("/sessions/$sessionId/exercises/$exerciseId/swap") {
+            contentType(ContentType.Application.Json)
+            setBody(SwapExerciseRequest(newMovementId, makePermanent))
+        }.body()
+    }
+
+    suspend fun substitutesFor(movementId: Int): Result<List<MovementSummary>> = runCatchingApi {
+        apiClient.http.get("/movements/substitutes/$movementId").body()
+    }
 }
