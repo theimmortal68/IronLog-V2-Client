@@ -55,12 +55,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jauschua.ironlogv2.data.api.dto.FinisherOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
+import com.jauschua.ironlogv2.data.api.dto.MovementSummary
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
+import com.jauschua.ironlogv2.data.api.dto.Status
 import com.jauschua.ironlogv2.data.api.dto.WarmupOut
 import com.jauschua.ironlogv2.service.IntervalTimerController
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
+import com.jauschua.ironlogv2.ui.screens.movements.MovementsListViewModel
 import com.jauschua.ironlogv2.ui.screens.review.displayMovementName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -75,6 +78,7 @@ private const val UNIT_ASSIST = "assist"
 @Composable
 fun CaptureScreen(
     vm: CaptureViewModel = viewModel(factory = CaptureViewModel.TodayFactory),
+    movementsVm: MovementsListViewModel = viewModel(factory = MovementsListViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val uiError by vm.uiError.collectAsStateWithLifecycle()
@@ -86,6 +90,19 @@ fun CaptureScreen(
     val pendingReview by vm.pendingReview.collectAsStateWithLifecycle()
     val loggedSetActuals by vm.loggedSetActuals.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+
+    // Full-library movement list for the swap sheet's search field — reuses the SAME
+    // repo/viewmodel call the Movements tab already uses (MovementsListViewModel ->
+    // LibraryRepo.movements()) rather than adding a second fetch, per Task 6's spec. Mapped
+    // from MovementDto (full library shape) down to MovementSummary (the swap sheet's shape),
+    // filtered to ACTIVE movements only.
+    val movementsState by movementsVm.state.collectAsStateWithLifecycle()
+    val fullLibrary = remember(movementsState) {
+        (movementsState as? UiState.Success)?.data
+            ?.filter { it.status == Status.ACTIVE }
+            ?.map { MovementSummary(id = it.id, name = it.name, status = it.status.name) }
+            ?: emptyList()
+    }
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -106,7 +123,7 @@ fun CaptureScreen(
                         SessionContent(
                             session, currentPlannedSetId, uiError, submitResult,
                             restRemainingSeconds, intervalRemainingSeconds, intervalPhaseLabel,
-                            loggedSetActuals, scope, vm, vm.intervalTimerController,
+                            loggedSetActuals, scope, vm, vm.intervalTimerController, fullLibrary,
                         )
                     }
                 }
@@ -137,6 +154,7 @@ private fun SessionContent(
     scope: CoroutineScope,
     vm: CaptureViewModel,
     intervalTimerController: IntervalTimerController,
+    fullLibrary: List<MovementSummary>,
 ) {
     // Flattened prescription for cursor-position queries (stable as long as session doesn't
     // change). MUST reuse the VM's flattenPrescription — GIANT_SET groups are round-major there
@@ -156,6 +174,11 @@ private fun SessionContent(
 
     // Session-level note, entered on the Finish screen; anchored to no movement (null) on submit.
     var sessionNote by remember(session.id) { mutableStateOf("") }
+
+    // Exercise id whose swap sheet is open; null when no sheet is showing. See the
+    // ExerciseActionsMenu wiring below and the SwapExerciseSheet render at the end of this
+    // composable.
+    var swapSheetExerciseId by remember(session.id) { mutableStateOf<Int?>(null) }
 
     var activeIntervalKey by remember(session.id) { mutableStateOf<String?>(null) }
     val intervalStatus = intervalRemainingSeconds?.let { remaining ->
@@ -493,11 +516,24 @@ private fun SessionContent(
                                 item(key = itemKey) {
                                     Column {
                                         if (sideIndex == 0) {
-                                            Text(
-                                                text = displayMovementName(exercise.movement_name),
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                modifier = Modifier.padding(start = 8.dp)
-                                            )
+                                            Row {
+                                                Text(
+                                                    text = displayMovementName(exercise.movement_name),
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    modifier = Modifier.padding(start = 8.dp)
+                                                )
+                                                val hasRemaining = exercise.planned_sets.any {
+                                                    it.id !in loggedSetActuals.keys.map { k -> k.first } && !it.is_skipped
+                                                }
+                                                if (hasRemaining) {
+                                                    ExerciseActionsMenu(
+                                                        onSwap = { swapSheetExerciseId = exercise.id },
+                                                        onSkip = {
+                                                            scope.launch { vm.skipExercise(exercise.id) }
+                                                        },
+                                                    )
+                                                }
+                                            }
                                         }
                                     val setKey = plannedSet.id to sideIndex
                                     val editable = isSetEditable(isPast, exercise.unilateral)
@@ -608,11 +644,24 @@ private fun SessionContent(
 
                             itemKeys.add("ex-$gi-$ei")
                             item(key = "ex-$gi-$ei") {
-                                Text(
-                                    text = displayMovementName(exercise.movement_name),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    modifier = Modifier.padding(start = 8.dp),
-                                )
+                                Row {
+                                    Text(
+                                        text = displayMovementName(exercise.movement_name),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        modifier = Modifier.padding(start = 8.dp),
+                                    )
+                                    val hasRemaining = exercise.planned_sets.any {
+                                        it.id !in loggedSetActuals.keys.map { k -> k.first } && !it.is_skipped
+                                    }
+                                    if (hasRemaining) {
+                                        ExerciseActionsMenu(
+                                            onSwap = { swapSheetExerciseId = exercise.id },
+                                            onSkip = {
+                                                scope.launch { vm.skipExercise(exercise.id) }
+                                            },
+                                        )
+                                    }
+                                }
                             }
 
                             exercise.planned_sets.forEach { plannedSet ->
@@ -795,6 +844,31 @@ private fun SessionContent(
                     }
                 }
             }
+        }
+    }
+
+    // Swap sheet, shown when an ExerciseActionsMenu's "Swap exercise" action set
+    // swapSheetExerciseId. Suggested substitutes are fetched fresh for the target exercise's
+    // current movement each time the sheet opens; fullLibrary (passed in from CaptureScreen,
+    // reusing the Movements-tab repo call) backs the search field.
+    swapSheetExerciseId?.let { exId ->
+        val targetExercise = session.groups.flatMap { it.exercises }.find { it.id == exId }
+        if (targetExercise != null) {
+            var substitutes by remember(exId) { mutableStateOf<List<MovementSummary>>(emptyList()) }
+            LaunchedEffect(exId) {
+                substitutes = vm.loadSubstitutes(targetExercise.movement_id)
+            }
+            SwapExerciseSheet(
+                substitutes = substitutes,
+                fullLibrary = fullLibrary,
+                onConfirm = { movementId, makePermanent ->
+                    scope.launch {
+                        vm.swapExercise(exId, movementId, makePermanent)
+                        swapSheetExerciseId = null
+                    }
+                },
+                onDismiss = { swapSheetExerciseId = null },
+            )
         }
     }
 }

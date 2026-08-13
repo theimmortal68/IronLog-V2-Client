@@ -862,4 +862,23 @@ class CaptureScreenLogicTest {
             effectiveLoadPrefill(carried, movementId = 36, targetLoad = 170.0, planIsFlat = true),
         )
     }
+
+    // ── Task 6: skip-aware resume cursor ─────────────────────────────────
+
+    @Test
+    fun `flattenPrescription-derived resume cursor skips is_skipped sets`() {
+        val skippedSet = PlannedSetOut(id = 1, set_index = 0, set_role = "WORKING", is_warmup = false,
+            is_skipped = true)
+        val nextSet = PlannedSetOut(id = 2, set_index = 1, set_role = "WORKING", is_warmup = false,
+            is_skipped = false)
+        val exercise = ExerciseOut(id = 10, movement_id = 100, movement_name = "Bench Press [PB]",
+            order_index = 0, scheme = "STRAIGHT", objective = "PROGRESS",
+            planned_sets = listOf(skippedSet, nextSet))
+        val group = GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(exercise))
+
+        val flattened = flattenPrescription(listOf(group))
+        val resumeSet = flattened.firstOrNull { !it.is_skipped }
+        assertEquals(2, resumeSet?.id)
+    }
 }

@@ -8,7 +8,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jauschua.ironlogv2.IronLogV2Application
 import com.jauschua.ironlogv2.data.api.IronLogException
 import com.jauschua.ironlogv2.data.api.humanMessage
+import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
+import com.jauschua.ironlogv2.data.api.dto.MovementSummary
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.local.SetLogDraft
@@ -232,6 +234,7 @@ class CaptureViewModel(
                             .groupingBy { it }
                             .eachCount()
                         val resumeSet = flattenedPrescription.firstOrNull { ps ->
+                            if (ps.is_skipped) return@firstOrNull false
                             val rows = rowCountByPlannedSetId[ps.id] ?: 0
                             val fullyLogged = if (ps.id in unilateralSetIds) rows >= 2 else rows >= 1
                             !fullyLogged
@@ -365,7 +368,10 @@ class CaptureViewModel(
             unilateralSideCount = 0
             val completedPlannedSetId = plannedSetId
             val idx = flattenedPrescription.indexOfFirst { it.id == completedPlannedSetId }
-            _currentPlannedSetId.value = flattenedPrescription.getOrNull(idx + 1)?.id
+            _currentPlannedSetId.value = flattenedPrescription
+                .drop(idx + 1)
+                .firstOrNull { !it.is_skipped }
+                ?.id
 
             // Auto-start the rest countdown for the set just completed (write already
             // committed above). STRAIGHT groups trigger after every set; GIANT_SET groups
@@ -393,6 +399,55 @@ class CaptureViewModel(
                 }
             }
         }
+    }
+
+    suspend fun skipExercise(exerciseId: Int) {
+        repo.skipExercise(sessionId, exerciseId)
+            .onSuccess { updated ->
+                applyUpdatedExercise(updated)
+            }
+            .onFailure { e ->
+                _uiError.value = (e as? IronLogException)?.error?.humanMessage() ?: e.message
+                    ?: "Failed to skip exercise"
+            }
+    }
+
+    suspend fun swapExercise(exerciseId: Int, newMovementId: Int, makePermanent: Boolean) {
+        repo.swapExercise(sessionId, exerciseId, newMovementId, makePermanent)
+            .onSuccess { updated ->
+                applyUpdatedExercise(updated)
+            }
+            .onFailure { e ->
+                _uiError.value = (e as? IronLogException)?.error?.humanMessage() ?: e.message
+                    ?: "Failed to swap exercise"
+            }
+    }
+
+    suspend fun loadSubstitutes(movementId: Int): List<MovementSummary> =
+        repo.substitutesFor(movementId).getOrDefault(emptyList())
+
+    /**
+     * Patches [updated] into the current session's group/exercise tree by exercise id,
+     * re-derives [flattenedPrescription] and the cursor (skip-aware, same rule as [load]'s
+     * resumeSet), and re-emits [UiState.Success] with the patched session -- avoids a full
+     * network re-fetch after a skip/swap.
+     */
+    private fun applyUpdatedExercise(updated: ExerciseOut) {
+        val current = (_state.value as? UiState.Success)?.data ?: return
+        val patchedGroups = current.groups.map { g ->
+            g.copy(exercises = g.exercises.map { if (it.id == updated.id) updated else it })
+        }
+        val patchedSession = current.copy(groups = patchedGroups)
+        flattenedPrescription = flattenPrescription(patchedGroups)
+        unilateralSetIds = unilateralPlannedSetIds(patchedGroups)
+        restContextBySetId = restContextByPlannedSetId(patchedGroups)
+        roundSetIdsBySetId = roundPlannedSetIdsBySetId(patchedGroups)
+        lastSetIdByGroup = lastSetIdByGroup(patchedGroups)
+        if (_currentPlannedSetId.value != null &&
+            flattenedPrescription.none { it.id == _currentPlannedSetId.value }) {
+            _currentPlannedSetId.value = flattenedPrescription.firstOrNull { !it.is_skipped }?.id
+        }
+        _state.value = UiState.Success(patchedSession)
     }
 
     /**
