@@ -26,6 +26,7 @@ import kotlinx.serialization.json.JsonObject
 )
 @Serializable data class PlannedSetOut(
     val id: Int, val set_index: Int, val set_role: String, val is_warmup: Boolean,
+    val is_skipped: Boolean = false,
     val target_load: Double? = null, val target_reps_low: Int? = null,
     val target_reps_high: Int? = null, val target_rpe: Double? = null,
     val target_unassisted_reps: Int? = null, val target_assisted_reps: Int? = null,
@@ -60,4 +61,10 @@ import kotlinx.serialization.json.JsonObject
     val id: Int, val date: String, val day_role: String, val phase: String,
     val status: String, val groups: List<GroupOut>, val finisher: FinisherOut? = null,
     val warmup: WarmupOut? = null,
+)
+@Serializable data class SwapExerciseRequest(
+    val new_movement_id: Int, val make_permanent: Boolean = false,
+)
+@Serializable data class MovementSummary(
+    val id: Int, val name: String, val primary_muscle: String? = null, val status: String,
 )
