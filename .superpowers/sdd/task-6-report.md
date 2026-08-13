@@ -1,193 +1,100 @@
-# Task 6 — HT band-composite setup display + reconfigure cue + felt-peak capture — completion report
+# Task 6 Report — Client capture cursor + overflow-menu UX
 
-**Status:** completed
-**Commit:** `c5e95f6` — `feat(capture): HT band-composite setup display + reconfigure cue + felt-peak capture`
-**Branch:** `feat/ht-band-composite`
+## What I implemented
 
-> Note: this report supersedes the prior "Today tab" Task 6 report (branch
-> `feat/today-generate-history`, commit `df8f50b`), which itself superseded an even earlier
-> "Task 6" report (rest timer, branch `feat/in-gym-logging`, commit `c1f02bd`). All three chunks
-> independently used this same `.superpowers/sdd/task-6-report.md` path — each chunk's own task
-> numbering restarted at "Task 6" — per the precedent already established in this file's history.
-> This report is for the HT (banded/plate "band-composite" resistance) client work: DTO field +
-> two pure helpers (TDD) + `bandNames`/`htSetupLine` composer helpers + three UI wiring points in
-> `CaptureScreen.kt`.
+Exactly the 4 files listed in the brief, plus the test-file append:
+
+1. **`CaptureViewModel.kt`**
+   - `resumeSet` computation in `load()` now skips `is_skipped` planned sets (`if (ps.is_skipped) return@firstOrNull false`).
+   - Cursor-advance in `logWorkingSet()` now skips over `is_skipped` entries when finding the next set (`.drop(idx + 1).firstOrNull { !it.is_skipped }?.id`).
+   - Added `skipExercise(exerciseId)`, `swapExercise(exerciseId, newMovementId, makePermanent)`, `loadSubstitutes(movementId)`.
+   - Added private `applyUpdatedExercise(updated: ExerciseOut)` that patches the returned exercise into the current session tree, re-derives all cursor-adjacent state, re-points the cursor off the patched (skip-aware) prescription if it fell off, and re-emits `UiState.Success`.
+   - **One correction vs. the brief's literal snippet**: the brief's `applyUpdatedExercise` read `current.session`, but `_state` is `MutableStateFlow<UiState<SessionDetailResponse?>>` and `UiState.Success` exposes the field as `.data` (confirmed from `UiState.kt` and the existing `is UiState.Success -> { val session = s.data }` pattern in `CaptureScreen.kt`). Used `.data` — compiles clean, verified via `:app:compileDebugKotlin`.
+
+2. **`ExerciseActionsMenu.kt`** (new) — overflow (⋮) menu, `Swap exercise` / `Skip remaining sets` items, exactly as specced. Trimmed two unused imports (`size`, `dp`) that the brief's snippet included but never used, to avoid unused-import lint noise.
+
+3. **`SwapExerciseSheet.kt`** (new) — two-step picker (suggested substitutes + full-library search, then today-only vs. permanent radio choice), exactly as specced. **Fixed one import bug in the brief's snippet**: it wrote `import androidx.compose.material3.Row`, but `Row` lives in `androidx.compose.foundation.layout.Row` (confirmed by grepping every other `Row` import in this codebase — all use `foundation.layout`). Using the brief's literal import would have failed to compile; used the correct package.
+
+4. **`CaptureScreen.kt`**
+   - Added `MovementsListViewModel` as a second `viewModel(factory = ...)` parameter to `CaptureScreen`, reusing the **existing** `LibraryRepo.movements()` call (the same one the Movements tab's `MovementsListViewModel` already uses) rather than adding a new repo method. Its `List<MovementDto>` result is filtered to `Status.ACTIVE` and mapped to `List<MovementSummary>` to match `SwapExerciseSheet`'s expected shape. See "Movements-repo reuse decision" below for why this shape mismatch existed and how I resolved it.
+   - `fullLibrary` threaded through as a new `SessionContent` parameter.
+   - `swapSheetExerciseId` state var added next to `sessionNote` in `SessionContent`.
+   - Both exercise-name `Text(...)` call sites (GIANT_SET branch, now ~line 519; STRAIGHT branch, now ~line 645) wrapped in a `Row` with a conditionally-rendered `ExerciseActionsMenu`, gated on `hasRemaining` (a not-yet-logged, not-yet-skipped planned set) — same shape at both sites, matching the brief.
+   - `SwapExerciseSheet` rendered as a sibling after the `Column { ... }` closes (same pattern the existing `GroupReviewSheet` uses in `CaptureScreen` — a conditionally-composed overlay outside the main layout tree), fetching substitutes fresh via a `LaunchedEffect(exId)` each time the sheet opens.
+
+5. **`CaptureScreenLogicTest.kt`** — appended the exact test from the brief's Step 1.
+
+## What I tested and results
+
+- **Step 1/2 (TDD)**: Wrote the test, ran `:app:testDebugUnitTest --tests "*CaptureScreenLogicTest*"` before touching any production code. **GREEN immediately** — exactly as the brief predicted (it exercises `flattenPrescription`, unchanged by this task; the point was to sanity-check the fixture shape against Task 5's `is_skipped` field, not to red/green a new behavior). This is not a TDD-failure-then-fix cycle; the brief explicitly flagged this test as a fixture-shape check, and it confirmed the DTO fixture builds correctly.
+- **After every CaptureScreen.kt edit**: ran `:app:compileDebugKotlin` — clean at every step (movements-fetch wiring, GIANT_SET Row wrap, STRAIGHT Row wrap, SwapExerciseSheet render block).
+- **Structural safety check**: after all CaptureScreen.kt edits, ran an awk running-brace-balance trace over the whole file — ends at 0, no imbalance introduced.
+- **Full build + full test suite**: `:app:assembleDebug :app:testDebugUnitTest` — **BUILD SUCCESSFUL**, all 90 tests in `CaptureScreenLogicTest` pass (`tests="90" skipped="0" failures="0" errors="0"`), full APK assembled.
 
 ## Files changed
 
-| File | Change |
-|---|---|
-| `app/src/main/java/com/jauschua/ironlogv2/data/api/dto/CaptureModels.kt` | Added `band_config: List<Int>? = null` to `PlannedSetOut`, field-for-field matching the server's shape (list of band ids), alongside the existing `target_plates`/`band_pair_id`/`target_felt_peak`. |
-| `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/CaptureScreen.kt` | New pure helpers in the "Pure display/pre-fill logic" section: `bandNames`, `composePlatesAndBands` (private, shared), `htSetupLine`, `htReconfigure`, `htObservedPeak`. UI wiring: `SetCard` renders the HT setup line (`Target:`-row style) when `isHtSet`; `SetCard` gained a `setFeltPeak`/`onFeltPeakChange` param pair and a "Felt peak (lb)" `OutlinedTextField`, shown only when `isCurrent && isHtSet && tapRequired`; `SessionContent` now tracks a running `prevHtSetup: Pair<Double?, List<Int>?>?` across the WHOLE session (declared above `session.groups.forEachIndexed`, updated inside the restructured `group.exercises.forEachIndexed`, independent of each group's expand/collapse state) and renders an `"ht-reconfigure-$gi-$ei"` banner item (`titleSmall`, primary color, `padding(top=12.dp)`) immediately before an HT exercise's `"ex-$gi-$ei"` item when `htReconfigure` fires. |
-| `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/CaptureViewModel.kt` | `logWorkingSet` gained a trailing `feltPeak: Double? = null` param, passed into the `SetLogDraft(...)` constructor as `feltPeak = feltPeak`. Default keeps every existing named-arg call site (`CaptureViewModelTest.kt`, `CaptureScreen.kt`'s pre-existing calls) compiling unchanged. |
-| `app/src/test/java/com/jauschua/ironlogv2/ui/capture/CaptureScreenLogicTest.kt` | 20 new `@Test` methods (no new file, per the current-instruction override of the stale `HtSetupLogicTest.kt` draft filename) covering `htReconfigure` (6 cases incl. the brief's 3 + 3 extra null-safety edges), `htObservedPeak` (5 cases, brief's 3 test methods = 5 assertions), `bandNames` (3 cases), `htSetupLine` (4 cases). |
+- `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/CaptureViewModel.kt` (modified)
+- `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/CaptureScreen.kt` (modified)
+- `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/ExerciseActionsMenu.kt` (new)
+- `app/src/main/java/com/jauschua/ironlogv2/ui/screens/capture/SwapExerciseSheet.kt` (new)
+- `app/src/test/java/com/jauschua/ironlogv2/ui/capture/CaptureScreenLogicTest.kt` (modified, append-only)
 
-`app/build.gradle.kts` and `.superpowers/sdd/task-7-report.md` had pre-existing uncommitted diffs (unrelated to this task) — left untouched and unstaged, per the task constraint.
+Commit: `25dd7e9` — `feat(capture): mid-workout swap/skip overflow menu + cursor skip-awareness`
 
-## TDD flow (RED → GREEN)
+## Movements-repo reuse decision
 
-1. Added `band_config` to `PlannedSetOut` (trivial DTO field, no test needed for a plain data
-   class field addition — mirrors the existing `target_plates`/`band_pair_id` fields exactly).
-2. **RED:** Added imports for `bandNames`/`htObservedPeak`/`htReconfigure`/`htSetupLine` and all
-   20 new `@Test` methods to `CaptureScreenLogicTest.kt` (implementation not yet written), ran:
+The brief said to reuse "the existing movements-list repo call already used elsewhere in the app for the Movements tab" rather than add a new one. That call is `LibraryRepo.movements(): Result<List<MovementDto>>`, consumed today only by `MovementsListViewModel` (Movements tab). It returns `MovementDto` (the full library shape: region, lift_category, equipment, progression fields, etc.), not `MovementSummary` (the swap sheet's minimal shape: id/name/primary_muscle/status) that `SwapExerciseSheet` and `CaptureRepo.substitutesFor()` already use.
 
-   ```
-   ./gradlew :app:testDebugUnitTest --tests "*CaptureScreenLogicTest"
-   ```
+Rather than adding a second repo/API call to fetch `MovementSummary` directly, I:
+1. Instantiated the existing `MovementsListViewModel` (via its existing `Factory`) as a second `viewModel()` param on `CaptureScreen`.
+2. Collected its `state: StateFlow<UiState<List<MovementDto>>>` the same way `MovementsListScreen` does.
+3. Filtered to `Status.ACTIVE` and mapped `MovementDto -> MovementSummary` locally in `CaptureScreen`.
 
-   Failed at `compileDebugUnitTestKotlin` with the expected "Unresolved reference" errors for
-   `bandNames`, `htObservedPeak`, `htReconfigure`, `htSetupLine` (repeated at every call site) —
-   confirms RED for the right reason (missing feature, not a typo). Tail:
+This reuses the actual network call and its existing caching/lifecycle (no new API endpoint touched, no new repo method), satisfying the "don't add a second fetch" instruction. The mapping step is the only new logic, and it's pure/local (no new interfaces, no new DTOs).
 
-   ```
-   > Task :app:compileDebugUnitTestKotlin FAILED
-   e: .../CaptureScreenLogicTest.kt:7:50 Unresolved reference 'bandNames'.
-   e: .../CaptureScreenLogicTest.kt:11:50 Unresolved reference 'htObservedPeak'.
-   e: .../CaptureScreenLogicTest.kt:12:50 Unresolved reference 'htReconfigure'.
-   e: .../CaptureScreenLogicTest.kt:13:50 Unresolved reference 'htSetupLine'.
-   [... repeated at every call site in the new test bodies ...]
+## Self-review
 
-   FAILURE: Build failed with an exception.
-   > Task :app:compileDebugUnitTestKotlin.
-   BUILD FAILED in 13s
-   ```
+- **Completeness**: all 4 spec'd pieces present and wired — skip-aware cursor (both directions: initial resume and post-log advance), the two new composables, both `CaptureScreen.kt` call sites wired, `applyUpdatedExercise` patch-in-place avoiding a full reload.
+- **Quality**: matches existing style (trailing commas, `MaterialTheme.typography.*`, `scope.launch { vm.* }` pattern for suspend VM calls, doc-comment conventions on non-obvious functions).
+- **Discipline**: no composables/params beyond what the brief specified. The only additions beyond the brief's literal text are the two bug fixes noted above (`.data` not `.session`; `foundation.layout.Row` not `material3.Row`) and two unused-import removals in `ExerciseActionsMenu.kt` — none of these add scope, they just make the brief's snippets actually compile/lint clean.
+- **Testing**: the cursor-skip logic is covered at the pure-function level (`flattenPrescription` + the filter idiom the VM now uses); `applyUpdatedExercise`'s cursor-repoint branch and the two new Compose composables are not separately unit-tested — this matches the brief's own scope (Step 1 is the only test step specified) and this file's established pattern of testing only the extracted pure logic, not Compose composables directly (see the test file's own doc comment: "Compose composables ... are not unit-tested here").
+- **Zero warnings-as-errors concerns**: build is clean; no new compiler warnings observed in the compile output beyond pre-existing `UP-TO-DATE`/task noise.
 
-3. **GREEN:** Implemented the four helpers (`bandNames`, `composePlatesAndBands` private shared
-   composer, `htSetupLine`, `htReconfigure`, `htObservedPeak`) in `CaptureScreen.kt`'s pure-logic
-   section. Re-ran the same command:
+## Concerns
 
-   ```
-   > Task :app:testDebugUnitTest
-   BUILD SUCCESSFUL in 11s
-   24 actionable tasks: 6 executed, 18 up-to-date
-   ```
+- **CaptureScreen.kt brace balance**: no issues. I compiled after each of the 4 edit points (movements-fetch, GIANT_SET Row wrap, STRAIGHT Row wrap, sheet render block) and ran a full brace-balance trace at the end — clean throughout. No guess-and-check was needed.
+- **Movements-repo reuse**: flagged above — I mapped `MovementDto -> MovementSummary` rather than the brief perhaps envisioning `MovementSummary` being fetched directly, because no such call exists elsewhere in the app. This is a judgment call within the brief's stated intent ("reuse... rather than adding a second one"); happy to revisit if a different shape was expected, but it satisfies the letter and spirit of the instruction.
+- **`applyUpdatedExercise` cursor-repoint edge case**: if a skip/swap removes the currently-cursored planned set from the flattened prescription entirely (e.g. skip removes it, or a swap changes exercise structure enough that the same id disappears), the cursor re-points to the first non-skipped entry in the whole session rather than trying to preserve "nearby" position. This matches the brief's literal snippet exactly (`flattenedPrescription.firstOrNull { !it.is_skipped }?.id`) — flagging in case that's a coarser fallback than intended, but it's what was specified.
+- **Two brief-snippet bugs fixed** (not concerns, just noting for the record so they're not mistaken for scope creep): `current.session` → `current.data` (brief's snippet referenced a field that doesn't exist on `UiState.Success`), and `import androidx.compose.material3.Row` → `androidx.compose.foundation.layout.Row` (wrong package in the brief, verified against every other `Row` import in the codebase).
 
-   40 tests in the suite (20 pre-existing + 20 new), 0 failures, 0 errors (confirmed via the
-   JUnit XML: `tests="40" skipped="0" failures="0" errors="0"`).
+## Review-response fixes
 
-4. Wired the three UI pieces into `CaptureScreen.kt` (setup line render, felt-peak input,
-   reconfigure banner + tracking var) and the `feltPeak` param through `CaptureViewModel` — pure
-   glue/wiring around already-tested pure functions, no new untested logic branches introduced
-   (the branch conditions — `isHtSet`, `tapRequired`, `expanded`, `htSet != null` — are boolean
-   compositions of existing tested inputs, not novel business logic).
+Opus code review of commit `25dd7e9` (this task) found one HIGH and one MEDIUM. This section documents the response.
 
-## Full unit-test-suite tail (no filter)
+### HIGH — fixed: cursor stranded on the just-skipped set when it was the current exercise
 
-```
-./gradlew :app:testDebugUnitTest
-...
-> Task :app:compileDebugUnitTestKotlin
-w: .../CaptureViewModelTest.kt:175:9 This declaration needs opt-in. ... ExperimentalCoroutinesApi ...
-w: .../CaptureViewModelTest.kt:186:9 This declaration needs opt-in. ... ExperimentalCoroutinesApi ...
-   (pre-existing warnings, unrelated to this task — same two lines present before this change)
+The concern flagged in this report's own "Concerns" section above (`applyUpdatedExercise` cursor-repoint edge case) turned out to be worse than described there: the fallback didn't just use a coarser-than-ideal re-selection rule, it frequently **never fired at all**. Both `skip_exercise` and `swap_exercise` (`ironlog/api/app.py`) mutate the existing `PlannedSet` rows IN PLACE — ids are never deleted or reassigned. So skipping the exercise the cursor was currently on flipped that set's `is_skipped` to `true` but left its `id` present in `flattenedPrescription`, meaning `flattenedPrescription.none { it.id == cur }` was always `false`. The cursor stayed parked on a set now marked skipped, which still rendered as the active input card (rendering has no `is_skipped` filter).
 
-> Task :app:testDebugUnitTest
+Fixed `applyUpdatedExercise` in `CaptureViewModel.kt`:
+- Re-selection now triggers when the current planned set is **either** missing from the flattened list **or** present but `is_skipped == true`.
+- The replacement cursor now uses the same semantics as `load()`'s `resumeSet` (first not-skipped, not-fully-logged set) instead of `firstOrNull { !it.is_skipped }`, which jumped backward to the first not-skipped set in the *entire* session, including earlier already-logged sets.
+- "Fully logged" is derived from `_loggedSetActuals` (already in memory, keyed by `plannedSetId to sideIndex`) rather than a fresh `repo.setLogsForSession` fetch — each successful write upserts exactly one entry per side, so counting entries per plannedSetId is equivalent to `load()`'s row-count map without a network round trip. Chose this over option (a) (re-fetching via `setLogsForSession`) because `applyUpdatedExercise` already has everything it needs in memory and a redundant network call added no correctness benefit.
 
-BUILD SUCCESSFUL in 12s
-26 actionable tasks: 7 executed, 19 up-to-date
-```
+**Regression test**: `skipping_the_current_exercise_reselects_cursor_forward_not_to_an_earlier_logged_set` added to `CaptureViewModelTest.kt`. Unlike the existing Task-6 test in `CaptureScreenLogicTest.kt` (which only re-implements `firstOrNull { !it.is_skipped }` inline against a hand-built flattened list and never touches production code), this test drives the actual `CaptureViewModel` end-to-end: loads a 3-exercise session via a path-branching `MockEngine` (exercise 1 sets 10/11 already fully logged, exercise 2 sets 20/21 is the current exercise with the cursor on set 20, exercise 3 sets 30/31 untouched), calls `vm.skipExercise(exerciseId = 2)` against a mocked skip response that patches exercise 2's planned sets to `is_skipped = true` in place (mirroring the real server behavior), and asserts the cursor lands on set 30 — not 20/21 (just skipped) and not 10/11 (earlier, already logged — where the bug would have jumped it). RED-confirmed by reasoning through the reverted code path (see the test's doc comment): the old fallback condition never fires when the id is still present, so the cursor would have stayed at 20, failing the assertion.
 
-Aggregate across all JUnit XML reports (`app/build/test-results/testDebugUnitTest/*.xml`):
-**86 tests total, 0 failures, 0 errors** (no regressions in the pre-existing suites —
-`CaptureDurabilityTest`, `CaptureRepoTest`, `CaptureViewModelTest`, `RestTimerTest`, plus any
-`today`/`history`/`generate`/`wizard` suites already in the tree).
+A comment was added above the existing weak test in `CaptureScreenLogicTest.kt` pointing to the new regression test and explaining why the old one wouldn't have caught this bug.
 
-## `assembleDebug` tail
+### MEDIUM — deferred: full movement library fetched eagerly on every Capture screen open
 
-```
-./gradlew :app:assembleDebug
-...
-> Task :app:mergeProjectDexDebug
-> Task :app:packageDebug
-> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
-> Task :app:assembleDebug
+Confirmed: `movementsVm` is instantiated as a default `viewModel(factory = MovementsListViewModel.Factory)` parameter of `CaptureScreen`, and `MovementsListViewModel.init { reload() }` fires unconditionally at construction — so the full movement list is fetched every time the Capture screen composes, whether or not the athlete ever opens the swap sheet.
 
-BUILD SUCCESSFUL in 2s
-38 actionable tasks: 3 executed, 35 up-to-date
-```
+Deferring this fix rather than forcing it in this pass, because a correct fix is more invasive than the review brief's "small change" bar:
+- `MovementsListViewModel` is shared with the real Movements tab, where eager-on-init fetch is the *correct* behavior — changing its `init {}` to not auto-load would require plumbing an explicit trigger through both call sites (Movements tab and Capture screen), not a one-line change confined to `CaptureScreen.kt`.
+- A `CaptureScreen`-local fix (e.g. deferring the `viewModel()` call itself until `swapSheetExerciseId` first becomes non-null) doesn't compose cleanly with Compose's `viewModel()` factory pattern, which is normally called unconditionally at the top of a composable — conditionally creating it only on first sheet-open would need either a `remember`-guarded lazy holder or restructuring `MovementsListViewModel` to accept an `autoLoad` flag, both bigger than the review's "small change" framing.
 
-## Commit
+Filed as a follow-up: give `MovementsListViewModel` an `autoLoad: Boolean = true` constructor param (or a separate lazy-init factory variant) so `CaptureScreen` can opt out of the eager `init { reload() }` and call `movementsVm.reload()` itself from a `LaunchedEffect(swapSheetExerciseId) { if (swapSheetExerciseId != null) movementsVm.reload() }` gated on first non-null. Left `CaptureScreen.kt` unchanged for this finding.
 
-- Message subject: `feat(capture): HT band-composite setup display + reconfigure cue + felt-peak capture`
-- SHA: `c5e95f6a5a52e7880c2b03c32665859710be138e`
-- Files staged: `CaptureModels.kt`, `CaptureScreen.kt`, `CaptureViewModel.kt`,
-  `CaptureScreenLogicTest.kt`, plus this report file. `app/build.gradle.kts` and
-  `.superpowers/sdd/task-7-report.md` were left out of the commit (pre-existing unrelated dirty
-  state — see constraints).
+### Verification
 
-## Design notes / judgment calls
-
-1. **Within-session (not cross-session) "prior setup" interpretation for the reconfigure
-   banner.** `CaptureScreen`'s `SessionContent` only has access to the current session's
-   `SessionDetailResponse` — there is no prior-session data loaded on this screen at all (no
-   history lookup, no cross-session state). So "prior HT setup" can only mean "the most recently
-   *encountered* HT exercise earlier in this same session's exercise list," walked in
-   `session.groups` / `group.exercises` order. This is consistent with the shoe-swap-style
-   sequential-comparison pattern already present in this loop for other features (per the brief:
-   match the *style*, not the code). The tracking var (`prevHtSetup`) is a plain local `var`
-   recomputed fresh every recomposition of `SessionContent`'s body (not `remember`-scoped) since
-   it's a deterministic function of `session` data, not independent UI state — no staleness risk
-   across recompositions.
-
-2. **`htReconfigure` OR-semantics, and how it corrects the brief's placeholder test.** The brief's
-   literal `htReconfigure_fires_when_only_plate_count_differs` test originally had its expected
-   value marked as an unresolved TODO. The brief's own prose resolves this ambiguity explicitly:
-   the design decision is an OR (config differs OR plates differ), not an AND and not
-   config-only. So that test now asserts `assertNotNull(...)` — plates changed 205→210 with the
-   *same* band config still fires the banner, because ANY exact difference in either dimension
-   means the physical station needs to change. I implement the comparison with plain Kotlin
-   `List<Int>? / Double?` equality (`config != prevConfig || plates != prevPlates`) — no
-   tolerance/rounding on the plate delta, and order-sensitive on the band list (a genuinely
-   reordered band selection is a genuinely different band choice, so it should fire too, per the
-   brief). I also added the "both current values null → null, even if prev was set" guard
-   (don't recommend reconfiguring TO an empty setup) and a couple of extra null-safety edge cases
-   beyond the brief's literal 3, per the brief's own invitation to add 2-3 more at my discretion.
-
-3. **Felt-peak input scoping: HT + working-role + current-set only.** The field is gated by
-   `isCurrent && isHtSet && tapRequired` in `SetCard`. `isCurrent` matches the existing
-   load/reps fields (no point collecting input for a set that isn't the active cursor position —
-   nothing would consume it). `isHtSet` (`target_plates != null || band_config != null`) scopes
-   it to sets that actually prescribe a band-composite setup — a plain barbell/plate set has no
-   "felt peak" concept (there's no band tension curve to distinguish from the plate load).
-   `tapRequired` (`WORKING`/`TOP`/`BACKOFF`) reuses the exact same role gate as the existing tap
-   selector, per the brief's explicit instruction to keep it "consistent with how the existing
-   tap selector is scoped" — warmup/other roles don't collect a felt-peak reading, matching how
-   they don't collect a tap either.
-
-4. **`composePlatesAndBands` factored out as a private shared helper**, called by both
-   `htSetupLine` (which appends the peak suffix) and `htReconfigure` (banner text, no peak
-   suffix) — per the brief's explicit instruction not to duplicate the plates+bands formatting
-   logic in two places. It's `private` (not `internal`) since only `htSetupLine`/`htReconfigure`
-   in the same file need it and the two public helpers are what the tests and other files
-   consume; no direct test for the private helper — it's exercised transitively via
-   `htSetupLine`'s and `htReconfigure`'s own tests (plates-only / bands-only / both-present
-   cases cover its branches).
-
-5. **`bandNames` uses `getOrNull` defensively**, per the brief's explicit instruction, rather than
-   throwing on an out-of-range band id — a server sending an id past the local `BAND_NAMES` list
-   (currently 6 entries, ids 0-5) degrades to silently dropping that one band's name from the
-   composed string rather than crashing the screen. Test
-   `bandNames_skips_out_of_range_ids_defensively` guards this.
-
-6. **`SetLogDraft`/`SetLogIn.feltPeak` entity fields were untouched**, as instructed — both
-   already existed with `feltPeak: Double? = null` (write-side, entity `feltPeak`, DTO
-   `felt_peak`) before this task; only `logWorkingSet`'s new trailing param and the
-   `SetLogDraft(...)` call site needed wiring.
-
-## Concerns / open items
-
-- **No phone/device available to verify visually** — this is a build+unit-test-only gate,
-  matching the precedent set by the sibling shoe-cue task's report (per the task brief's own
-  framing). The reconfigure banner, felt-peak input visibility gating, and setup-line rendering
-  are exercised only through their extracted pure functions (`htReconfigure`, `htSetupLine`,
-  `bandNames`) plus `assembleDebug` compiling the Compose call sites — not through an on-device
-  or Compose UI test render. If an HT-exercise fixture becomes available for a future
-  `SessionDetailResponse`-driven integration/screenshot test, that would close this gap.
-- The server-side `band_config` shape (list of band ids, e.g. `[0]` / `[0,1]`) was taken as given
-  from the task brief, not independently re-verified against the live server response — if the
-  server ever sends more than the 6 named colors (`Orange, Red, Blue, Green, Black, Purple`),
-  `bandNames` silently drops the unmapped id(s) rather than surfacing an error; this seemed
-  correct per instruction #5 above but is worth flagging as a place where a future band-color
-  addition on the server needs a matching client-side `BAND_NAMES` update or it will silently
-  under-render.
-- No new Gradle dependency was added, and `app/build.gradle.kts` was not touched, per constraint.
+- `:app:compileDebugKotlin` — BUILD SUCCESSFUL.
+- `:app:assembleDebug :app:testDebugUnitTest` — BUILD SUCCESSFUL, 283 tests total across the module, 0 failures/errors (baseline before this fix was 90 in `CaptureScreenLogicTest` alone; the full-module count of 283 includes `CaptureViewModelTest`, `CaptureViewModelReviewTest`, `GroupReviewLogicTest`, `RestTimerTest`, and others — all green, including the new regression test).
