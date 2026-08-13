@@ -951,4 +951,90 @@ class CaptureViewModelTest {
 
         assertNull("all sets logged → cursor null, same as today's end-state", vm.currentPlannedSetId.value)
     }
+
+    // ── Review-response fix: cursor re-selection after skipping the currently active exercise ──
+
+    /**
+     * Opus review of 25dd7e9 (HIGH): `skip_exercise`/`swap_exercise` mutate PlannedSet rows IN
+     * PLACE server-side -- ids are unchanged, only `is_skipped` flips. Skipping the exercise the
+     * cursor is CURRENTLY on must not strand it on a set now marked skipped (the old fallback's
+     * `flattenedPrescription.none { it.id == cur }` never fired, since the id was still present);
+     * it must land on the next not-skipped, not-fully-logged set — same semantics as [load]'s
+     * resumeSet — not jump backward to an earlier already-logged set (the old fallback's
+     * `firstOrNull { !it.is_skipped }` would have done exactly that).
+     *
+     * Session: exercise 1 (sets 10,11) is fully logged BEFORE the skip, exercise 2 (sets 20,21)
+     * is the CURRENT exercise (cursor sits on set 20) and gets skipped, exercise 3 (sets 30,31)
+     * is untouched. Correct post-skip cursor is 30 — not 20/21 (just skipped) and not 10/11
+     * (earlier, already logged — the bug this regression guards against would jump there).
+     *
+     * RED-confirmed against the reverted (buggy) `applyUpdatedExercise`: reverting to
+     *   `if (cur != null && flattenedPrescription.none { it.id == cur })
+     *        _currentPlannedSetId.value = flattenedPrescription.firstOrNull { !it.is_skipped }?.id`
+     * left the cursor at 20 (unchanged — the id is still present) instead of advancing to 30,
+     * causing the final assertEquals to fail with actual == 20.
+     */
+    @Test
+    fun skipping_the_current_exercise_reselects_cursor_forward_not_to_an_earlier_logged_set() = runBlocking {
+        val e1 = exercise(id = 1, idBase = 10, rounds = 2)
+        val e2 = exercise(id = 2, idBase = 20, rounds = 2)
+        val e3 = exercise(id = 3, idBase = 30, rounds = 2)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(e1, e2, e3),
+        )
+        val session = SessionDetailResponse(
+            id = 7, date = "2026-07-07", day_role = "PUSH", phase = "BASE",
+            status = "IN_PROGRESS", groups = listOf(group),
+        )
+        val sessionJson = Json.encodeToString(session)
+        // Server-side skip: the exercise's planned sets are patched is_skipped=true IN PLACE —
+        // same ids, no rows added/removed — mirroring the real skip_exercise/swap_exercise
+        // behavior confirmed against ironlog/api/app.py.
+        val skippedE2 = e2.copy(planned_sets = e2.planned_sets.map { it.copy(is_skipped = true) })
+        val skippedE2Json = Json.encodeToString(skippedE2)
+
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext<Context>(), CaptureDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val engine = MockEngine { req ->
+            val path = req.url.encodedPath
+            val body = when {
+                path.endsWith("/sessions/today") -> sessionJson
+                path.endsWith("/exercises/2/skip") -> skippedE2Json
+                else -> """{"session_id":7,"status":"COMPLETED","set_logs_written":1,"already_completed":false}"""
+            }
+            respond(
+                content = ByteReadChannel(body),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val repo = CaptureRepo(ApiClient(engine = engine), db.captureDao())
+
+        // Exercise 1 fully logged BEFORE the (simulated) session resumes.
+        listOf(10, 11).forEach { psId ->
+            db.captureDao().insertSetLog(
+                SetLogDraft(
+                    sessionId = 7, plannedSetId = psId, movementId = 1, setIndex = 0,
+                    setRole = "WORKING", isWarmup = false, actualLoad = 100.0, actualReps = 8,
+                    feedbackTap = "ON_TARGET",
+                ),
+            )
+        }
+
+        val vm = CaptureViewModel(repo, sessionId = 0)
+        vm.load()
+        vm.state.await { it is UiState.Success }
+        assertEquals("cursor starts on exercise 2's first set", 20, vm.currentPlannedSetId.value)
+
+        vm.skipExercise(exerciseId = 2)
+
+        assertEquals(
+            "cursor lands on exercise 3's first set — not the just-skipped set, and not " +
+                "jumped backward to exercise 1's already-logged sets",
+            30,
+            vm.currentPlannedSetId.value,
+        )
+    }
 }

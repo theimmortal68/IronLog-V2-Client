@@ -431,6 +431,24 @@ class CaptureViewModel(
      * re-derives [flattenedPrescription] and the cursor (skip-aware, same rule as [load]'s
      * resumeSet), and re-emits [UiState.Success] with the patched session -- avoids a full
      * network re-fetch after a skip/swap.
+     *
+     * Cursor re-selection (Opus review of 25dd7e9, HIGH fix): both `skip_exercise` and
+     * `swap_exercise` mutate the existing PlannedSet rows IN PLACE server-side -- neither
+     * deletes rows nor changes ids. So skipping the exercise the cursor is CURRENTLY on marks
+     * that set's `is_skipped = true` but leaves its id present in [flattenedPrescription] --
+     * `flattenedPrescription.none { it.id == cur }` would never fire, stranding the cursor on a
+     * now-skipped set that still renders as the active input card (rendering has no
+     * `is_skipped` filter). Re-selection must ALSO trigger when the current set is still present
+     * but now skipped, not only when it vanishes. And the replacement must mirror [load]'s
+     * resumeSet semantics (first not-skipped, not-fully-logged set) rather than
+     * `firstOrNull { !it.is_skipped }`, which would jump the cursor backward to the first
+     * not-skipped set in the WHOLE session, including earlier already-logged sets.
+     *
+     * "Fully logged" is derived from [_loggedSetActuals] (already in memory, keyed by
+     * (plannedSetId, sideIndex)) rather than a fresh [CaptureRepo.setLogsForSession] fetch --
+     * each successful [logWorkingSet]/[editLoggedSet] write upserts exactly one entry per side,
+     * so counting entries per plannedSetId here is equivalent to [load]'s row-count map without
+     * a network round trip.
      */
     private fun applyUpdatedExercise(updated: ExerciseOut) {
         val current = (_state.value as? UiState.Success)?.data ?: return
@@ -443,9 +461,19 @@ class CaptureViewModel(
         restContextBySetId = restContextByPlannedSetId(patchedGroups)
         roundSetIdsBySetId = roundPlannedSetIdsBySetId(patchedGroups)
         lastSetIdByGroup = lastSetIdByGroup(patchedGroups)
-        if (_currentPlannedSetId.value != null &&
-            flattenedPrescription.none { it.id == _currentPlannedSetId.value }) {
-            _currentPlannedSetId.value = flattenedPrescription.firstOrNull { !it.is_skipped }?.id
+        val currentId = _currentPlannedSetId.value
+        val currentEntry = currentId?.let { id -> flattenedPrescription.firstOrNull { it.id == id } }
+        val needsReselect = currentId != null && (currentEntry == null || currentEntry.is_skipped)
+        if (needsReselect) {
+            val rowCountByPlannedSetId = _loggedSetActuals.value.keys
+                .groupingBy { it.first }
+                .eachCount()
+            _currentPlannedSetId.value = flattenedPrescription.firstOrNull { ps ->
+                if (ps.is_skipped) return@firstOrNull false
+                val rows = rowCountByPlannedSetId[ps.id] ?: 0
+                val fullyLogged = if (ps.id in unilateralSetIds) rows >= 2 else rows >= 1
+                !fullyLogged
+            }?.id
         }
         _state.value = UiState.Success(patchedSession)
     }
