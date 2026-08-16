@@ -192,8 +192,18 @@ private fun SessionContent(
     // Later UNLOGGED sets of the SAME exercise pre-fill to those values only when that field's
     // plan is flat across the exercise. Scoped to the session (not the cursor) so it survives the
     // cursor advancing across sets.
-    var carriedLoadByMovement by remember(session.id) { mutableStateOf<Map<Int, Double>>(emptyMap()) }
-    var carriedRepsByMovement by remember(session.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+    //
+    // Restart-survival fix: seeded from [loggedSetActuals] (persisted Room data, already
+    // reconstructed by [CaptureViewModel.load] before this composable ever sees a non-null
+    // session — `load()` sets `_loggedSetActuals` before flipping `_state` to `Success`, so this
+    // is never a stale/empty read) instead of always starting empty — see [reconstructCarriedLoad]
+    // for why the map was previously lost across an app relaunch.
+    var carriedLoadByMovement by remember(session.id) {
+        mutableStateOf(reconstructCarriedLoad(session, loggedSetActuals))
+    }
+    var carriedRepsByMovement by remember(session.id) {
+        mutableStateOf(reconstructCarriedReps(session, loggedSetActuals))
+    }
 
     val workingPlannedSets = currentExercise?.planned_sets?.filter { !it.is_warmup } ?: emptyList()
     val loadPlanIsFlat = isFlatAcrossSets(workingPlannedSets.map { it.target_load })
@@ -1647,6 +1657,67 @@ internal fun effectiveRepsPrefill(
 ): String =
     if (planIsFlat) carriedReps[movementId]?.toString() ?: plannedSet?.let(::prefillReps) ?: ""
     else plannedSet?.let(::prefillReps) ?: ""
+
+/** (movementId, set_index) for a planned set, used by [reconstructCarriedLoad]/[reconstructCarriedReps]
+ * to resolve which movement a persisted [LoggedSetActual] belongs to and how "recent" it is. */
+private data class CarryLookupEntry(val movementId: Int, val setIndex: Int)
+
+private fun carryLookup(session: SessionDetailResponse): Map<Int, CarryLookupEntry> =
+    session.groups.flatMap { it.exercises }
+        .flatMap { ex -> ex.planned_sets.map { ps -> ps.id to CarryLookupEntry(ex.movement_id, ps.set_index) } }
+        .toMap()
+
+/**
+ * Rebuild the [carriedLoadByMovement]-shaped carry-forward map from PERSISTED data after an app
+ * relaunch (process-death-during-backgrounding fix). Fix F's carry-forward map is normally built
+ * live, one keystroke at a time, via [withCarriedLoad] as the athlete edits the CURRENT cursor
+ * set's input (see the `onLoadChange` call sites) — it is never itself persisted. If the process
+ * is killed mid-session, [CaptureViewModel.load] correctly resumes the CURSOR from Room (see its
+ * `resumeSet` logic), but the carry map came back empty because nothing reconstructed it —
+ * confirmed via `adb logcat -s CarryFwd:D`: identical cursor position, `carried=3.0` before a
+ * background kill and `carried=null` after relaunch.
+ *
+ * This derives the same value the live map would hold, from [loggedSetActuals] ([load]'s own
+ * reconstruction of Room's persisted actuals): for each movement, the actual load of its
+ * highest-`set_index` LOGGED set. `set_index` (not Room insertion/draftId order) is the correct
+ * "most recent" proxy — only edits to the CURRENT cursor set ever feed the live carry map
+ * ([editLoggedSet] correcting an EARLIER past set does not call [withCarriedLoad]), so the live
+ * map's recency always tracks cursor/set_index order, and a past-set correction bumping that
+ * row's Room `draftId` must NOT be mistaken for a more-recent carry-forward write.
+ */
+internal fun reconstructCarriedLoad(
+    session: SessionDetailResponse,
+    loggedSetActuals: Map<Pair<Int, Int>, LoggedSetActual>,
+): Map<Int, Double> {
+    val lookup = carryLookup(session)
+    return loggedSetActuals.entries
+        .mapNotNull { (key, actual) ->
+            val load = actual.actualLoad ?: return@mapNotNull null
+            val info = lookup[key.first] ?: return@mapNotNull null
+            Triple(info.movementId, info.setIndex, load)
+        }
+        .groupBy { it.first }
+        .mapValues { (_, entries) -> entries.maxBy { it.second }.third }
+}
+
+/**
+ * Reps counterpart of [reconstructCarriedLoad] — same reasoning, keyed on [LoggedSetActual.actualReps]
+ * instead of `actualLoad`.
+ */
+internal fun reconstructCarriedReps(
+    session: SessionDetailResponse,
+    loggedSetActuals: Map<Pair<Int, Int>, LoggedSetActual>,
+): Map<Int, Int> {
+    val lookup = carryLookup(session)
+    return loggedSetActuals.entries
+        .mapNotNull { (key, actual) ->
+            val reps = actual.actualReps ?: return@mapNotNull null
+            val info = lookup[key.first] ?: return@mapNotNull null
+            Triple(info.movementId, info.setIndex, reps)
+        }
+        .groupBy { it.first }
+        .mapValues { (_, entries) -> entries.maxBy { it.second }.third }
+}
 
 /**
  * Records [newLoad] as the carried-forward default for [movementId] (fix F) — later unlogged

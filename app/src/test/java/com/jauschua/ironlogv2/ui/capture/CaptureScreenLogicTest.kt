@@ -5,6 +5,8 @@ import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.FinisherOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
+import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
+import com.jauschua.ironlogv2.ui.screens.capture.LoggedSetActual
 import com.jauschua.ironlogv2.ui.screens.capture.bandNames
 import com.jauschua.ironlogv2.ui.screens.capture.effectiveLoadPrefill
 import com.jauschua.ironlogv2.ui.screens.capture.effectiveRepsPrefill
@@ -26,6 +28,8 @@ import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
 import com.jauschua.ironlogv2.ui.screens.capture.perSideLabel
 import com.jauschua.ironlogv2.ui.screens.capture.prefillReps
 import com.jauschua.ironlogv2.ui.screens.capture.prefillWeight
+import com.jauschua.ironlogv2.ui.screens.capture.reconstructCarriedLoad
+import com.jauschua.ironlogv2.ui.screens.capture.reconstructCarriedReps
 import com.jauschua.ironlogv2.ui.screens.capture.repsInputLabel
 import com.jauschua.ironlogv2.ui.screens.capture.repsTargetLabel
 import com.jauschua.ironlogv2.ui.screens.capture.rpeLabel
@@ -825,6 +829,89 @@ class CaptureScreenLogicTest {
         )
 
         assertEquals("6", effectiveRepsPrefill(carried, movementId = 5, plannedSet = plannedSet, planIsFlat = false))
+    }
+
+    // ── Restart-survival fix: reconstructCarriedLoad / reconstructCarriedReps ───────────
+
+    private fun exerciseWithSets(exerciseId: Int, movementId: Int, plannedSetIds: List<Int>) = ExerciseOut(
+        id = exerciseId, movement_id = movementId, movement_name = "movement-$movementId",
+        order_index = 0, scheme = "STRAIGHT", objective = "",
+        planned_sets = plannedSetIds.mapIndexed { idx, id ->
+            PlannedSetOut(id = id, set_index = idx, set_role = "WORKING", is_warmup = false)
+        },
+    )
+
+    private fun sessionOf(vararg exercises: ExerciseOut) = SessionDetailResponse(
+        id = 1, date = "2026-08-16", day_role = "PUSH", phase = "BASE", status = "IN_PROGRESS",
+        groups = listOf(
+            GroupOut(id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1, exercises = exercises.toList()),
+        ),
+    )
+
+    @Test
+    fun reconstructCarriedLoad_uses_the_highest_set_index_logged_set_per_movement() {
+        // Movement 36 has planned sets 100 (set_index 0), 101 (set_index 1), 102 (set_index 2).
+        // Sets 100 and 101 are logged; 102 is not reached yet. The carried value must come from
+        // set 101 (the higher set_index), not set 100 -- picking an EARLIER set's value is the
+        // subtler, worse bug the spec warned about.
+        val session = sessionOf(exerciseWithSets(exerciseId = 1, movementId = 36, plannedSetIds = listOf(100, 101, 102)))
+        val loggedActuals = mapOf(
+            (100 to 0) to LoggedSetActual(actualLoad = 170.0, actualReps = 8, tap = "ON_TARGET"),
+            (101 to 0) to LoggedSetActual(actualLoad = 175.0, actualReps = 8, tap = "ON_TARGET"),
+        )
+
+        assertEquals(mapOf(36 to 175.0), reconstructCarriedLoad(session, loggedActuals))
+    }
+
+    @Test
+    fun reconstructCarriedReps_uses_the_highest_set_index_logged_set_per_movement() {
+        val session = sessionOf(exerciseWithSets(exerciseId = 1, movementId = 36, plannedSetIds = listOf(100, 101, 102)))
+        val loggedActuals = mapOf(
+            (100 to 0) to LoggedSetActual(actualLoad = 170.0, actualReps = 8, tap = "ON_TARGET"),
+            (101 to 0) to LoggedSetActual(actualLoad = 175.0, actualReps = 6, tap = "ON_TARGET"),
+        )
+
+        assertEquals(mapOf(36 to 6), reconstructCarriedReps(session, loggedActuals))
+    }
+
+    @Test
+    fun reconstructCarriedLoad_tracks_each_movement_independently_in_a_multi_exercise_session() {
+        // Giant-set-shaped session: three movements interleaved, each with its own logged sets.
+        val session = sessionOf(
+            exerciseWithSets(exerciseId = 1, movementId = 36, plannedSetIds = listOf(100, 101, 102)),
+            exerciseWithSets(exerciseId = 2, movementId = 40, plannedSetIds = listOf(200, 201, 202)),
+        )
+        val loggedActuals = mapOf(
+            (100 to 0) to LoggedSetActual(actualLoad = 170.0, actualReps = 8, tap = null),
+            (200 to 0) to LoggedSetActual(actualLoad = 60.0, actualReps = 10, tap = null),
+            (201 to 0) to LoggedSetActual(actualLoad = 65.0, actualReps = 10, tap = null),
+        )
+
+        assertEquals(
+            "each movement's carry value comes from ITS OWN highest-set_index logged set",
+            mapOf(36 to 170.0, 40 to 65.0),
+            reconstructCarriedLoad(session, loggedActuals),
+        )
+    }
+
+    @Test
+    fun reconstructCarriedLoad_ignores_rows_with_a_null_actual_load() {
+        // A logged set with a null actualLoad (e.g. only reps/tap recorded) must not poison the
+        // carry map with a null-derived entry, and must not block a later set's real value.
+        val session = sessionOf(exerciseWithSets(exerciseId = 1, movementId = 36, plannedSetIds = listOf(100, 101)))
+        val loggedActuals = mapOf(
+            (100 to 0) to LoggedSetActual(actualLoad = null, actualReps = 8, tap = "ON_TARGET"),
+        )
+
+        assertEquals(emptyMap<Int, Double>(), reconstructCarriedLoad(session, loggedActuals))
+    }
+
+    @Test
+    fun reconstructCarriedLoad_is_empty_when_nothing_has_been_logged() {
+        val session = sessionOf(exerciseWithSets(exerciseId = 1, movementId = 36, plannedSetIds = listOf(100, 101)))
+
+        assertEquals(emptyMap<Int, Double>(), reconstructCarriedLoad(session, emptyMap()))
+        assertEquals(emptyMap<Int, Int>(), reconstructCarriedReps(session, emptyMap()))
     }
 
     // ── Spec 13: GIANT_SET round interleaving verification ──────────────────────────────

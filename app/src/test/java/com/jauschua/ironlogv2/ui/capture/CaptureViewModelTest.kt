@@ -20,6 +20,8 @@ import com.jauschua.ironlogv2.ui.UiState
 import com.jauschua.ironlogv2.ui.screens.capture.CaptureViewModel
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import com.jauschua.ironlogv2.ui.screens.capture.pastSetIds
+import com.jauschua.ironlogv2.ui.screens.capture.reconstructCarriedLoad
+import com.jauschua.ironlogv2.ui.screens.capture.reconstructCarriedReps
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
@@ -950,6 +952,91 @@ class CaptureViewModelTest {
         vm.state.await { it is UiState.Success }
 
         assertNull("all sets logged → cursor null, same as today's end-state", vm.currentPlannedSetId.value)
+    }
+
+    // ── Restart-survival fix: carry-forward map reconstruction after a simulated app relaunch ──
+
+    /**
+     * Root cause (confirmed live via `adb logcat -s CarryFwd:D`): `carriedLoadByMovement` /
+     * `carriedRepsByMovement` in CaptureScreen.kt are pure in-memory Compose state, never
+     * persisted. If Android kills the process while backgrounded and the app relaunches, [load]
+     * correctly resumes the CURSOR from Room (see `load_leaves_cursor_null_when_all_sets_are_...`
+     * above and the mid-unilateral-set resume test), but the carry-forward map came back empty --
+     * at the SAME cursor position, the diagnostic log showed `carried=3.0` before a background
+     * kill and `carried=null` five minutes later after relaunch.
+     *
+     * This test drives the real production path an app relaunch takes: real Room inserts for
+     * sets logged in a "previous process" (mirroring the earlier tests' fixture pattern), then a
+     * FRESH [CaptureViewModel] with `vm.load()` called once (simulating cold start after process
+     * death) -- never a live carry-forward write via `withCarriedLoad`/`withCarriedReps`. The
+     * fix, `reconstructCarriedLoad`/`reconstructCarriedReps` (CaptureScreen.kt), is applied to
+     * exactly what [load] leaves in `vm.loggedSetActuals` + the loaded session -- the same inputs
+     * CaptureScreen's `remember(session.id)` seed now uses -- proving the reconstruction is
+     * correct end-to-end from persisted data, not merely that the write-path works.
+     *
+     * Multi-exercise session (three movements, like a giant set): movement 1 has TWO logged sets
+     * (10 -> set_index 0, 11 -> set_index 1) -- the carried value must come from set 11 (the
+     * LATER one), not 10, proving the reconstruction picks the most-recently-logged set per
+     * movement rather than just any logged set. Movement 2 has one logged set. Movement 3 has
+     * none logged yet (not reached before the kill) and must be absent from both carry maps.
+     */
+    @Test
+    fun load_after_simulated_relaunch_reconstructs_carry_forward_maps_from_persisted_actuals() = runBlocking {
+        val e1 = exercise(id = 1, idBase = 10, rounds = 2) // movement_id 1, planned sets 10 (idx0), 11 (idx1)
+        val e2 = exercise(id = 2, idBase = 20, rounds = 2) // movement_id 2, planned sets 20 (idx0), 21 (idx1)
+        val e3 = exercise(id = 3, idBase = 30, rounds = 2) // movement_id 3, planned sets 30 (idx0), 31 (idx1)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(e1, e2, e3),
+        )
+        val session = SessionDetailResponse(
+            id = 7, date = "2026-08-16", day_role = "PUSH", phase = "BASE",
+            status = "IN_PROGRESS", groups = listOf(group),
+        )
+        val (repo, db) = repoForLoad(session)
+
+        // Sets logged in the "previous process" — never touches carriedLoadByMovement/
+        // carriedRepsByMovement (those are screen-local, dead once the process is killed); only
+        // Room durably survives.
+        db.captureDao().insertSetLog(
+            SetLogDraft(
+                sessionId = 7, plannedSetId = 10, movementId = 1, setIndex = 0, setRole = "WORKING",
+                isWarmup = false, actualLoad = 170.0, actualReps = 8, feedbackTap = "ON_TARGET",
+            ),
+        )
+        db.captureDao().insertSetLog(
+            SetLogDraft(
+                sessionId = 7, plannedSetId = 11, movementId = 1, setIndex = 1, setRole = "WORKING",
+                isWarmup = false, actualLoad = 175.0, actualReps = 8, feedbackTap = "ON_TARGET",
+            ),
+        )
+        db.captureDao().insertSetLog(
+            SetLogDraft(
+                sessionId = 7, plannedSetId = 20, movementId = 2, setIndex = 0, setRole = "WORKING",
+                isWarmup = false, actualLoad = 60.0, actualReps = 10, feedbackTap = "ON_TARGET",
+            ),
+        )
+
+        // Simulated relaunch: brand-new ViewModel instance, no prior in-memory carry state.
+        val vm = CaptureViewModel(repo, sessionId = 0)
+        vm.load()
+        vm.state.await { it is UiState.Success }
+
+        val loadedSession = (vm.state.value as UiState.Success).data!!
+        val carriedLoad = reconstructCarriedLoad(loadedSession, vm.loggedSetActuals.value)
+        val carriedReps = reconstructCarriedReps(loadedSession, vm.loggedSetActuals.value)
+
+        assertEquals(
+            "movement 1's carry value comes from set 11 (set_index 1, the LATER logged set) — " +
+                "not set 10, which would be the subtler wrong-direction bug",
+            mapOf(1 to 175.0, 2 to 60.0),
+            carriedLoad,
+        )
+        assertEquals(mapOf(1 to 8, 2 to 10), carriedReps)
+        assertNull(
+            "movement 3 was never logged before the simulated kill — must be ABSENT, not defaulted",
+            carriedLoad[3],
+        )
     }
 
     // ── Review-response fix: cursor re-selection after skipping the currently active exercise ──
