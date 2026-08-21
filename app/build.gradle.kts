@@ -17,7 +17,17 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        buildConfigField("String", "SERVER_BASE_URL", "\"http://myflix.media:8000\"")
+        // 2026-08-21: hardcoded to the LAN IP after diagnosing a real
+        // "server unreachable" report -- the phone's Android "Private DNS"
+        // (DNS-over-TLS via 8.8.8.8) returned a stale/wrong answer for
+        // myflix.media (an unrelated Maryland ISP IP, connection refused)
+        // even while on the home WiFi network the server is actually on;
+        // the workstation querying the identical 8.8.8.8 resolver got the
+        // correct 192.168.1.7. Sidesteps that whole DNS-caching/private-DNS
+        // instability class for the common case (phone on home WiFi). No
+        // LAN/remote URL-switching logic exists in this client (unlike
+        // Flixd-Client) -- this only serves home use, matching current need.
+        buildConfigField("String", "SERVER_BASE_URL", "\"http://192.168.1.7:8000\"")
     }
 
     buildTypes {
