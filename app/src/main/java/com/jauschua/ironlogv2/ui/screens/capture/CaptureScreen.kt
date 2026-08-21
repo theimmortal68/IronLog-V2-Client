@@ -71,8 +71,14 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** The DTO's unit_hint marker for assisted/incline movements (assist value, not a weight). */
+/** The DTO's unit_hint marker for assisted/incline movements (assist value, not a weight).
+ * UNIT_ASSIST is the legacy generic hint (unclassified movements); the rest are the
+ * server's specific classifications (see app.py's _unit_hint_for/_ASSIST_UNIT_HINTS). */
 private const val UNIT_ASSIST = "assist"
+private const val UNIT_ASSIST_DEGREES = "assist_degrees"
+private const val UNIT_ASSIST_BANDS = "assist_bands"
+private const val UNIT_ASSIST_LB = "assist_lb"
+private const val UNIT_ASSIST_REPS = "assist_reps"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1566,15 +1572,34 @@ internal fun repsInputLabel(plannedSet: PlannedSetOut): String {
 internal fun formatWeight(value: Double): String =
     if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
 
-/** Scalar load/assist target and actual display. Unknown/null unit hints remain pounds. */
+/** Scalar load/assist target and actual display. Unknown/null unit hints remain pounds.
+ *
+ * 2026-08-21: the server classifies assisted movements into specific hints
+ * (assist_degrees/assist_bands/assist_lb/assist_reps, see app.py's
+ * _unit_hint_for) instead of the old bare "assist" string -- this client was
+ * never updated to recognize them, so every classified assist movement fell
+ * through to the "lb" else-branch (real bug report: "leg raise still has
+ * weight instead of degrees"). UNIT_ASSIST ("assist") is kept as the legacy
+ * fallback for movements the server hasn't classified yet -- server comment
+ * confirms it intentionally preserves that old default, mapped to degrees. */
 internal fun loadDisplayLabel(value: Double, unitHint: String?): String {
-    val suffix = if (unitHint == UNIT_ASSIST) "°" else "lb"
+    val suffix = when (unitHint) {
+        UNIT_ASSIST_DEGREES, UNIT_ASSIST -> "°"
+        UNIT_ASSIST_BANDS -> " bands"
+        UNIT_ASSIST_REPS -> " reps"
+        else -> "lb"
+    }
     return "${formatWeight(value)}$suffix"
 }
 
 /** Scalar load/assist input label. Unknown/null unit hints remain pounds. */
-internal fun loadInputLabel(unitHint: String?): String =
-    if (unitHint == UNIT_ASSIST) "Assist (°)" else "Load (lb)"
+internal fun loadInputLabel(unitHint: String?): String = when (unitHint) {
+    UNIT_ASSIST_DEGREES, UNIT_ASSIST -> "Assist (°)"
+    UNIT_ASSIST_BANDS -> "Assist (bands)"
+    UNIT_ASSIST_LB -> "Assist (lb)"
+    UNIT_ASSIST_REPS -> "Assist (reps)"
+    else -> "Load (lb)"
+}
 
 /** Weight input pre-fill — [targetLoad] as an editable default; blank when null
  * (needs-calibration: no floor to prefill). */

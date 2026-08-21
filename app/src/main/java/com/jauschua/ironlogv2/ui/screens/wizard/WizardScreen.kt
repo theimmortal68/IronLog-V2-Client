@@ -37,8 +37,12 @@ import com.jauschua.ironlogv2.ui.UiState
 /** Trust labels owned by the server (compute_load_trust). The screen only routes display by them. */
 private const val TRUST_STALE = "STALE"
 
-/** The DTO's unit_hint / load_field marker for assisted movements (assist value, not a weight). */
+/** The DTO's unit_hint / load_field marker for assisted movements (assist value, not a weight).
+ * UNIT_ASSIST is the legacy generic hint; assist_degrees/bands/lb/reps are the server's
+ * specific classifications (see app.py's _unit_hint_for/_ASSIST_UNIT_HINTS) -- mirrors the
+ * same fix applied to CaptureScreen.kt's loadDisplayLabel/loadInputLabel (2026-08-21). */
 private const val UNIT_ASSIST = "assist"
+private val ASSIST_UNIT_HINTS = setOf(UNIT_ASSIST, "assist_degrees", "assist_bands", "assist_lb", "assist_reps")
 
 /**
  * First-run wizard screen: renders the server's trust verdict for each movement and starts the program.
@@ -185,7 +189,7 @@ private fun ActionMovementCard(
     onValueChange: (String) -> Unit,
 ) {
     // Assisted movements collect an assist value, not a weight — labelled accordingly.
-    val isAssist = movement.unit_hint == UNIT_ASSIST || movement.load_field == UNIT_ASSIST
+    val isAssist = movement.unit_hint in ASSIST_UNIT_HINTS || movement.load_field in ASSIST_UNIT_HINTS
     val fieldLabel = if (isAssist) "Assist (lb)" else "Load (${movement.unit_hint ?: "lb"})"
     val hint = if (movement.trust == TRUST_STALE) "Confirm or adjust" else "Needs a value"
 
