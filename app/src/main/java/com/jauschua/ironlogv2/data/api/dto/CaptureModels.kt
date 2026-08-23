@@ -50,6 +50,20 @@ import kotlinx.serialization.json.JsonObject
     val params: JsonObject = JsonObject(emptyMap()),
     val current_duration_seconds: Int? = null,
     val current_rope: String? = null,
+    val last_logged_weight_lb: Double? = null,
+    val last_logged_resistance_level: Int? = null,
+)
+@Serializable data class FinisherLogRequest(
+    val movement_id: Int,
+    val actual_weight_lb: Double? = null,
+    val actual_resistance_level: Int? = null,
+    val notes: String? = null,
+)
+@Serializable data class FinisherLogResponse(
+    val id: Int,
+    val movement_id: Int,
+    val actual_weight_lb: Double?,
+    val actual_resistance_level: Int?,
 )
 @Serializable data class WarmupOut(
     val movement_flow_seconds: Int,

@@ -61,6 +61,7 @@ import com.jauschua.ironlogv2.data.api.dto.SessionDetailResponse
 import com.jauschua.ironlogv2.data.api.dto.Status
 import com.jauschua.ironlogv2.data.api.dto.WarmupOut
 import com.jauschua.ironlogv2.service.IntervalTimerController
+import com.jauschua.ironlogv2.service.clampedIntervalWorkSeconds
 import com.jauschua.ironlogv2.ui.ErrorRetryBox
 import com.jauschua.ironlogv2.ui.UiState
 import com.jauschua.ironlogv2.ui.screens.movements.MovementsListViewModel
@@ -809,6 +810,26 @@ private fun SessionContent(
                                     intervalTimerController.startTimeBasedIntervals(
                                         mode.totalMinutes,
                                         mode.workSeconds,
+                                        mode.restSeconds,
+                                        mode.label,
+                                        leadInSeconds = 5,
+                                    )
+                                }
+                                is FinisherTimerMode.Emom -> {
+                                    intervalTimerController.startEmomIntervals(
+                                        mode.totalMinutes,
+                                        mode.repsPerMinute,
+                                        mode.label,
+                                        leadInSeconds = 5,
+                                    )
+                                }
+                                is FinisherTimerMode.Tabata -> {
+                                    intervalTimerController.startTabataIntervals(
+                                        mode.workSeconds,
+                                        mode.restSeconds,
+                                        mode.roundsPerBlock,
+                                        mode.blocks,
+                                        mode.interBlockRestSeconds,
                                         mode.label,
                                         leadInSeconds = 5,
                                     )
@@ -819,6 +840,14 @@ private fun SessionContent(
                         onStopInterval = {
                             intervalTimerController.stop()
                             activeIntervalKey = null
+                        },
+                        onLogFinisher = { _, _ ->
+                            // NEEDS_INPUT: FinisherOut carries no movement_id — the server's
+                            // build_finisher_payload (assembler.py) only returns exercise_name,
+                            // never the raw movement FK, so there is no valid id to send in
+                            // FinisherLogRequest. Wire this to captureRepo.logFinisher(...) once
+                            // the server payload exposes movement_id (see spec 30 §2); until then
+                            // the Log button in FinisherSection is a stubbed no-op.
                         },
                     )
                 }
@@ -980,6 +1009,7 @@ private fun FinisherSection(
     intervalStatus: InlineIntervalStatus?,
     onStartInterval: (FinisherTimerMode) -> Unit,
     onStopInterval: () -> Unit,
+    onLogFinisher: (Double?, Int?) -> Unit,
 ) {
     val timerMode = finisherTimerMode(finisher)
     val metadataLine = listOfNotNull(
@@ -1018,11 +1048,58 @@ private fun FinisherSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        finisherLoggableKind(finisher.params)?.let { kind ->
+            FinisherLogRow(kind = kind, finisher = finisher, onLogFinisher = onLogFinisher)
+        }
         if (active && intervalStatus != null) {
             InlineIntervalStatusBar(
                 status = intervalStatus,
                 onStop = onStopInterval,
             )
+        }
+    }
+}
+
+/** Compact inline weight/resistance input + "Log" button for [FinisherSection] — see
+ * [finisherLoggableKind] for which finishers render this row. */
+@Composable
+private fun FinisherLogRow(
+    kind: FinisherLoggableKind,
+    finisher: FinisherOut,
+    onLogFinisher: (Double?, Int?) -> Unit,
+) {
+    var value by remember(finisher.exercise_name) {
+        mutableStateOf(
+            when (kind) {
+                FinisherLoggableKind.WEIGHT -> prefillWeight(finisher.last_logged_weight_lb)
+                FinisherLoggableKind.RESISTANCE -> finisher.last_logged_resistance_level?.toString() ?: ""
+            },
+        )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { value = it },
+            label = { Text(if (kind == FinisherLoggableKind.WEIGHT) "Weight (lb)" else "Resistance") },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = if (kind == FinisherLoggableKind.WEIGHT) KeyboardType.Decimal else KeyboardType.Number,
+            ),
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            onClick = {
+                when (kind) {
+                    FinisherLoggableKind.WEIGHT -> onLogFinisher(value.toDoubleOrNull(), null)
+                    FinisherLoggableKind.RESISTANCE -> onLogFinisher(null, value.toIntOrNull())
+                }
+            },
+        ) {
+            Text("Log")
         }
     }
 }
@@ -1394,14 +1471,50 @@ private fun SetCard(
 private const val FINISHER_INTERVAL_KEY = "finisher"
 private const val PARAM_TARGET_REPS_PER_MINUTE = "target_reps_per_minute"
 private const val PARAM_WORK_SECONDS_PER_MINUTE = "work_seconds_per_minute"
+private const val PARAM_REST_SECONDS_PER_MINUTE = "rest_seconds_per_minute"
+private const val PARAM_SCHEME = "scheme"
+private const val PARAM_WORK_SECONDS = "work_seconds"
+private const val PARAM_REST_SECONDS = "rest_seconds"
+private const val PARAM_ROUNDS_PER_BLOCK = "rounds_per_block"
+private const val PARAM_BLOCKS = "blocks"
+private const val PARAM_INTER_BLOCK_REST_SECONDS = "inter_block_rest_seconds"
+private const val PARAM_WEIGHT_LB = "weight_lb"
+private const val PARAM_RESISTANCE_LEVEL = "resistance_level"
+private const val SCHEME_EMOM = "emom"
+private const val SCHEME_TABATA = "tabata"
 
 private val finisherCoveredParamKeys = setOf("current_duration_seconds", "current_rope")
 private val warmupMetricKeys = listOf("reps", "reps_per_side", "seconds", "seconds_per_side", "hold_seconds")
 
 internal sealed interface FinisherTimerMode {
     data class RepBased(val totalMinutes: Int, val label: String) : FinisherTimerMode
-    data class TimeBased(val totalMinutes: Int, val workSeconds: Int, val label: String) : FinisherTimerMode
+    data class TimeBased(
+        val totalMinutes: Int,
+        val workSeconds: Int,
+        val restSeconds: Int,
+        val label: String,
+    ) : FinisherTimerMode
+    data class Emom(val totalMinutes: Int, val repsPerMinute: Int, val label: String) : FinisherTimerMode
+    data class Tabata(
+        val workSeconds: Int,
+        val restSeconds: Int,
+        val roundsPerBlock: Int,
+        val blocks: Int,
+        val interBlockRestSeconds: Int,
+        val label: String,
+    ) : FinisherTimerMode
     data object None : FinisherTimerMode
+}
+
+/** Which numeric field (if any) in [params] this finisher can log via [FinisherLogRow] —
+ * `weight_lb` wins if both happen to be present, mirroring [finisherTimerMode]'s "first match
+ * wins" style. Null when neither field is present (nothing to log). */
+internal enum class FinisherLoggableKind { WEIGHT, RESISTANCE }
+
+internal fun finisherLoggableKind(params: JsonObject): FinisherLoggableKind? = when {
+    params.doubleParam(PARAM_WEIGHT_LB) != null -> FinisherLoggableKind.WEIGHT
+    params.intParam(PARAM_RESISTANCE_LEVEL) != null -> FinisherLoggableKind.RESISTANCE
+    else -> null
 }
 
 internal fun humanizeFinisherName(name: String): String =
@@ -1413,25 +1526,77 @@ internal fun humanizeFinisherName(name: String): String =
 private fun finisherParamValue(value: JsonElement): String = (value as? JsonPrimitive)?.content ?: value.toString()
 
 private fun jsonIntValue(value: JsonElement?): Int? = (value as? JsonPrimitive)?.content?.toIntOrNull()
+private fun jsonDoubleValue(value: JsonElement?): Double? = (value as? JsonPrimitive)?.content?.toDoubleOrNull()
 
 private fun JsonObject.intParam(key: String): Int? = jsonIntValue(this[key])
+private fun JsonObject.doubleParam(key: String): Double? = jsonDoubleValue(this[key])
 
+/**
+ * Routes a finisher to its timer mode. `scheme` (new, server-provided) is checked FIRST — after
+ * this session's server-side deploy all 5 live finishers carry a real, correct `scheme` — falling
+ * back to the old presence-based heuristic (repsPerMinute -> RepBased, workSeconds -> TimeBased)
+ * only defensively, for a finisher whose params predate the `scheme` field. Never throws on
+ * malformed/missing params — a `scheme` value whose required fields are missing or non-numeric
+ * simply falls through to the next case instead of crashing.
+ */
 internal fun finisherTimerMode(finisher: FinisherOut): FinisherTimerMode {
     if (finisher.duration_minutes <= 0) return FinisherTimerMode.None
     val label = humanizeFinisherName(finisher.exercise_name)
-    val repsPerMinute = finisher.params.intParam(PARAM_TARGET_REPS_PER_MINUTE)
-    val workSeconds = finisher.current_duration_seconds ?: finisher.params.intParam(PARAM_WORK_SECONDS_PER_MINUTE)
+    val params = finisher.params
+
+    when ((params[PARAM_SCHEME] as? JsonPrimitive)?.content) {
+        SCHEME_TABATA -> {
+            val workSeconds = params.intParam(PARAM_WORK_SECONDS)
+            val restSeconds = params.intParam(PARAM_REST_SECONDS)
+            val roundsPerBlock = params.intParam(PARAM_ROUNDS_PER_BLOCK)
+            val blocks = params.intParam(PARAM_BLOCKS)
+            val interBlockRestSeconds = params.intParam(PARAM_INTER_BLOCK_REST_SECONDS)
+            if (workSeconds != null && restSeconds != null && roundsPerBlock != null &&
+                blocks != null && interBlockRestSeconds != null
+            ) {
+                return FinisherTimerMode.Tabata(
+                    workSeconds = workSeconds,
+                    restSeconds = restSeconds,
+                    roundsPerBlock = roundsPerBlock,
+                    blocks = blocks,
+                    interBlockRestSeconds = interBlockRestSeconds,
+                    label = label,
+                )
+            }
+        }
+        SCHEME_EMOM -> {
+            val repsPerMinute = params.intParam(PARAM_TARGET_REPS_PER_MINUTE)
+            if (repsPerMinute != null) {
+                return FinisherTimerMode.Emom(
+                    totalMinutes = finisher.duration_minutes,
+                    repsPerMinute = repsPerMinute,
+                    label = label,
+                )
+            }
+        }
+    }
+
+    val repsPerMinute = params.intParam(PARAM_TARGET_REPS_PER_MINUTE)
+    val workSeconds = finisher.current_duration_seconds ?: params.intParam(PARAM_WORK_SECONDS_PER_MINUTE)
     return when {
         // If both timer params somehow arrive, rep-based mode deliberately wins.
         repsPerMinute != null -> FinisherTimerMode.RepBased(
             totalMinutes = finisher.duration_minutes,
             label = label,
         )
-        workSeconds != null -> FinisherTimerMode.TimeBased(
-            totalMinutes = finisher.duration_minutes,
-            workSeconds = workSeconds,
-            label = label,
-        )
+        workSeconds != null -> {
+            // Old client-side fallback derivation, kept ONLY for finishers whose params
+            // genuinely lack a real rest field — the service itself must never do this
+            // derivation anymore (see IntervalTimerSequence's TimeBased tick logic).
+            val restSeconds = params.intParam(PARAM_REST_SECONDS_PER_MINUTE)
+                ?: (60 - clampedIntervalWorkSeconds(workSeconds))
+            FinisherTimerMode.TimeBased(
+                totalMinutes = finisher.duration_minutes,
+                workSeconds = workSeconds,
+                restSeconds = restSeconds,
+                label = label,
+            )
+        }
         else -> FinisherTimerMode.None
     }
 }

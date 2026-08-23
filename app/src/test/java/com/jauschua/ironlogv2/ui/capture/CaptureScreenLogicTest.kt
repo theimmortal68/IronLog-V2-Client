@@ -10,7 +10,9 @@ import com.jauschua.ironlogv2.ui.screens.capture.LoggedSetActual
 import com.jauschua.ironlogv2.ui.screens.capture.bandNames
 import com.jauschua.ironlogv2.ui.screens.capture.effectiveLoadPrefill
 import com.jauschua.ironlogv2.ui.screens.capture.effectiveRepsPrefill
+import com.jauschua.ironlogv2.ui.screens.capture.FinisherLoggableKind
 import com.jauschua.ironlogv2.ui.screens.capture.FinisherTimerMode
+import com.jauschua.ironlogv2.ui.screens.capture.finisherLoggableKind
 import com.jauschua.ironlogv2.ui.screens.capture.finisherTimerMode
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
 import com.jauschua.ironlogv2.ui.screens.capture.formatRepsTarget
@@ -80,7 +82,9 @@ class CaptureScreenLogicTest {
         )
 
         assertEquals(
-            FinisherTimerMode.TimeBased(totalMinutes = 10, workSeconds = 35, label = "Burpees"),
+            // No rest_seconds_per_minute in params -- falls back to the old 60-work derivation
+            // ONLY in this client-side fallback path (60 - 35 = 25).
+            FinisherTimerMode.TimeBased(totalMinutes = 10, workSeconds = 35, restSeconds = 25, label = "Burpees"),
             finisherTimerMode(finisher),
         )
     }
@@ -95,7 +99,7 @@ class CaptureScreenLogicTest {
         )
 
         assertEquals(
-            FinisherTimerMode.TimeBased(totalMinutes = 8, workSeconds = 35, label = "Jump Rope"),
+            FinisherTimerMode.TimeBased(totalMinutes = 8, workSeconds = 35, restSeconds = 25, label = "Jump Rope"),
             finisherTimerMode(finisher),
         )
     }
@@ -110,7 +114,7 @@ class CaptureScreenLogicTest {
         )
 
         assertEquals(
-            FinisherTimerMode.TimeBased(totalMinutes = 8, workSeconds = 40, label = "Jump Rope"),
+            FinisherTimerMode.TimeBased(totalMinutes = 8, workSeconds = 40, restSeconds = 20, label = "Jump Rope"),
             finisherTimerMode(finisher),
         )
     }
@@ -179,6 +183,141 @@ class CaptureScreenLogicTest {
         )
 
         assertEquals(FinisherTimerMode.None, finisherTimerMode(finisher))
+    }
+
+    // ── Spec 30: scheme-based routing (emom / tabata) + honest TimeBased rest ───────────
+
+    @Test
+    fun finisherTimerMode_time_based_honors_real_rest_seconds_per_minute_param() {
+        // sled_push: work 20s, rest 30s -- NOT the old 60-work coincidence (60-20=40 != 30).
+        val finisher = FinisherOut(
+            exercise_name = "sled_push",
+            duration_minutes = 6,
+            params = JsonObject(
+                mapOf(
+                    "work_seconds_per_minute" to JsonPrimitive(20),
+                    "rest_seconds_per_minute" to JsonPrimitive(30),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.TimeBased(totalMinutes = 6, workSeconds = 20, restSeconds = 30, label = "Sled Push"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_emom_when_scheme_is_emom() {
+        val finisher = FinisherOut(
+            exercise_name = "sandbag_load_to_utility_seat",
+            duration_minutes = 6,
+            params = JsonObject(
+                mapOf(
+                    "scheme" to JsonPrimitive("emom"),
+                    "target_reps_per_minute" to JsonPrimitive(4),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.Emom(totalMinutes = 6, repsPerMinute = 4, label = "Sandbag Load To Utility Seat"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_emom_falls_through_to_legacy_heuristic_when_reps_missing() {
+        val finisher = FinisherOut(
+            exercise_name = "sandbag_load_to_utility_seat",
+            duration_minutes = 6,
+            params = JsonObject(mapOf("scheme" to JsonPrimitive("emom"))),
+        )
+
+        // No target_reps_per_minute under scheme=emom and no work-seconds fallback either.
+        assertEquals(FinisherTimerMode.None, finisherTimerMode(finisher))
+    }
+
+    @Test
+    fun finisherTimerMode_tabata_when_scheme_is_tabata() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 6,
+            params = JsonObject(
+                mapOf(
+                    "scheme" to JsonPrimitive("tabata"),
+                    "work_seconds" to JsonPrimitive(20),
+                    "rest_seconds" to JsonPrimitive(10),
+                    "rounds_per_block" to JsonPrimitive(8),
+                    "blocks" to JsonPrimitive(2),
+                    "inter_block_rest_seconds" to JsonPrimitive(75),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.Tabata(
+                workSeconds = 20,
+                restSeconds = 10,
+                roundsPerBlock = 8,
+                blocks = 2,
+                interBlockRestSeconds = 75,
+                label = "Jump Rope",
+            ),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_tabata_falls_through_to_legacy_heuristic_when_malformed() {
+        // scheme=tabata but missing rounds_per_block/blocks -- must not crash, falls through.
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            duration_minutes = 6,
+            current_duration_seconds = 35,
+            params = JsonObject(
+                mapOf(
+                    "scheme" to JsonPrimitive("tabata"),
+                    "work_seconds" to JsonPrimitive(20),
+                    "rest_seconds" to JsonPrimitive(10),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.TimeBased(totalMinutes = 6, workSeconds = 35, restSeconds = 25, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    // ── Spec 30: finisherLoggableKind — which finishers render the weight/resistance log row ──
+
+    @Test
+    fun finisherLoggableKind_weight_when_weight_lb_present() {
+        val params = JsonObject(mapOf("weight_lb" to JsonPrimitive(100)))
+        assertEquals(FinisherLoggableKind.WEIGHT, finisherLoggableKind(params))
+    }
+
+    @Test
+    fun finisherLoggableKind_resistance_when_resistance_level_present() {
+        val params = JsonObject(mapOf("resistance_level" to JsonPrimitive(8)))
+        assertEquals(FinisherLoggableKind.RESISTANCE, finisherLoggableKind(params))
+    }
+
+    @Test
+    fun finisherLoggableKind_weight_wins_when_both_present() {
+        val params = JsonObject(
+            mapOf(
+                "weight_lb" to JsonPrimitive(100),
+                "resistance_level" to JsonPrimitive(8),
+            ),
+        )
+        assertEquals(FinisherLoggableKind.WEIGHT, finisherLoggableKind(params))
+    }
+
+    @Test
+    fun finisherLoggableKind_null_when_neither_present() {
+        assertNull(finisherLoggableKind(JsonObject(mapOf("equipment" to JsonPrimitive("sandbag_100")))))
     }
 
     // ── Spec 15: warmup jump-rope interval timer extraction ─────────────────────────────
