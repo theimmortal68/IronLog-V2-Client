@@ -841,13 +841,10 @@ private fun SessionContent(
                             intervalTimerController.stop()
                             activeIntervalKey = null
                         },
-                        onLogFinisher = { _, _ ->
-                            // NEEDS_INPUT: FinisherOut carries no movement_id — the server's
-                            // build_finisher_payload (assembler.py) only returns exercise_name,
-                            // never the raw movement FK, so there is no valid id to send in
-                            // FinisherLogRequest. Wire this to captureRepo.logFinisher(...) once
-                            // the server payload exposes movement_id (see spec 30 §2); until then
-                            // the Log button in FinisherSection is a stubbed no-op.
+                        onLogFinisher = { weightLb, resistanceLevel ->
+                            scope.launch {
+                                vm.logFinisher(finisher.movement_id, weightLb, resistanceLevel)
+                            }
                         },
                     )
                 }

@@ -63,6 +63,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_rep_based_when_target_reps_per_minute_present() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 8,
             params = JsonObject(mapOf("target_reps_per_minute" to JsonPrimitive(80))),
         )
@@ -77,6 +78,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_time_based_when_work_seconds_per_minute_present() {
         val finisher = FinisherOut(
             exercise_name = "burpees",
+            movement_id = 1,
             duration_minutes = 10,
             params = JsonObject(mapOf("work_seconds_per_minute" to JsonPrimitive(35))),
         )
@@ -93,6 +95,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_time_based_prefers_current_duration_seconds_over_stale_param() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 8,
             current_duration_seconds = 35,
             params = JsonObject(mapOf("work_seconds_per_minute" to JsonPrimitive(30))),
@@ -108,6 +111,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_time_based_when_current_duration_seconds_present_without_static_param() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 8,
             current_duration_seconds = 40,
             params = JsonObject(emptyMap()),
@@ -123,6 +127,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_rep_based_when_both_timer_params_present() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 8,
             params = JsonObject(
                 mapOf(
@@ -142,6 +147,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_rep_based_when_target_reps_and_current_duration_seconds_present() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 8,
             current_duration_seconds = 35,
             params = JsonObject(
@@ -162,6 +168,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_none_when_no_timer_param_present() {
         val finisher = FinisherOut(
             exercise_name = "burpees",
+            movement_id = 1,
             duration_minutes = 10,
             params = JsonObject(emptyMap()),
         )
@@ -173,6 +180,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_none_when_duration_minutes_is_not_positive() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 0,
             params = JsonObject(
                 mapOf(
@@ -192,6 +200,7 @@ class CaptureScreenLogicTest {
         // sled_push: work 20s, rest 30s -- NOT the old 60-work coincidence (60-20=40 != 30).
         val finisher = FinisherOut(
             exercise_name = "sled_push",
+            movement_id = 1,
             duration_minutes = 6,
             params = JsonObject(
                 mapOf(
@@ -211,6 +220,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_emom_when_scheme_is_emom() {
         val finisher = FinisherOut(
             exercise_name = "sandbag_load_to_utility_seat",
+            movement_id = 1,
             duration_minutes = 6,
             params = JsonObject(
                 mapOf(
@@ -230,6 +240,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_emom_falls_through_to_legacy_heuristic_when_reps_missing() {
         val finisher = FinisherOut(
             exercise_name = "sandbag_load_to_utility_seat",
+            movement_id = 1,
             duration_minutes = 6,
             params = JsonObject(mapOf("scheme" to JsonPrimitive("emom"))),
         )
@@ -242,6 +253,7 @@ class CaptureScreenLogicTest {
     fun finisherTimerMode_tabata_when_scheme_is_tabata() {
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 6,
             params = JsonObject(
                 mapOf(
@@ -273,6 +285,7 @@ class CaptureScreenLogicTest {
         // scheme=tabata but missing rounds_per_block/blocks -- must not crash, falls through.
         val finisher = FinisherOut(
             exercise_name = "jump_rope",
+            movement_id = 1,
             duration_minutes = 6,
             current_duration_seconds = 35,
             params = JsonObject(

@@ -46,6 +46,7 @@ import kotlinx.serialization.json.JsonObject
 )
 @Serializable data class FinisherOut(
     val exercise_name: String,
+    val movement_id: Int,
     val duration_minutes: Int,
     val params: JsonObject = JsonObject(emptyMap()),
     val current_duration_seconds: Int? = null,
