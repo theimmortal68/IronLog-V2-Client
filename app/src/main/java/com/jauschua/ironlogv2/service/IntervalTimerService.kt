@@ -266,6 +266,10 @@ internal data class IntervalTickResult(
 
 internal fun clampedIntervalWorkSeconds(workSeconds: Int): Int = workSeconds.coerceIn(1, 59)
 
+// Tabata phases have no sub-minute constraint (unlike TimeBased/Countdown, which must fit
+// inside a 60-second minute) -- only a lower bound of 1 second applies.
+internal fun clampedTabataSeconds(seconds: Int): Int = seconds.coerceAtLeast(1)
+
 internal fun intervalTimerRepBasedLabel(round: Int, totalMinutes: Int): String =
     "Minute $round of $totalMinutes"
 
@@ -367,7 +371,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                     currentBlock = 1
                     isWorkPhase = true
                     isInterBlockRestPhase = false
-                    remainingInPhase = clampedIntervalWorkSeconds(state.workSeconds)
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
                     phaseLabel = intervalTimerTabataLabel(
                         "Work",
                         currentRound,
@@ -560,7 +564,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                     currentBlock = 1
                     isWorkPhase = true
                     isInterBlockRestPhase = false
-                    remainingInPhase = clampedIntervalWorkSeconds(state.workSeconds)
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
                     phaseLabel = intervalTimerTabataLabel(
                         "Work",
                         currentRound,
@@ -580,7 +584,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                     // phase was entered (see the rest-phase-ends branch below); resume work.
                     isInterBlockRestPhase = false
                     isWorkPhase = true
-                    remainingInPhase = clampedIntervalWorkSeconds(state.workSeconds)
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
                     phaseLabel = intervalTimerTabataLabel(
                         "Work",
                         currentRound,
@@ -597,7 +601,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 }
                 if (isWorkPhase) {
                     isWorkPhase = false
-                    remainingInPhase = clampedIntervalWorkSeconds(state.restSeconds)
+                    remainingInPhase = clampedTabataSeconds(state.restSeconds)
                     phaseLabel = intervalTimerTabataLabel(
                         "Rest",
                         currentRound,
@@ -616,7 +620,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 if (currentRound < state.roundsPerBlock) {
                     currentRound += 1
                     isWorkPhase = true
-                    remainingInPhase = clampedIntervalWorkSeconds(state.workSeconds)
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
                     phaseLabel = intervalTimerTabataLabel(
                         "Work",
                         currentRound,
@@ -635,7 +639,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                     currentRound = 1
                     currentBlock += 1
                     isInterBlockRestPhase = true
-                    remainingInPhase = clampedIntervalWorkSeconds(state.interBlockRestSeconds)
+                    remainingInPhase = clampedTabataSeconds(state.interBlockRestSeconds)
                     phaseLabel = intervalTimerTabataBlockRestLabel(currentBlock, state.blocks)
                     return IntervalTickResult(
                         remainingSeconds = remainingInPhase,

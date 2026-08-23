@@ -736,6 +736,40 @@ class IntervalTimerServiceLogicTest {
     }
 
     @Test
+    fun tabataSequence_interBlockRest_notCappedAt59_reflectsRealD6JumpRopeValue() {
+        // Regression test for the HIGH bug in commit 5f5aedf: TabataBlocks reused
+        // clampedIntervalWorkSeconds (coerceIn(1, 59)) for interBlockRestSeconds, silently
+        // truncating the real, shipped D6 jump_rope finisher's 75s inter-block rest down to 59s.
+        // roundsPerBlock = 1 lets this test reach the inter-block-rest phase in exactly two
+        // ticks (work ends -> rest; rest ends -> inter-block-rest), which is what makes this a
+        // real proof rather than an initial-state-only check.
+        val sequence = IntervalTimerSequence(
+            IntervalTimerState.TabataBlocks(
+                workSeconds = 1,
+                restSeconds = 1,
+                roundsPerBlock = 1,
+                blocks = 2,
+                interBlockRestSeconds = 75,
+                label = "Jump Rope",
+            )
+        )
+
+        val work = sequence.initialResult()
+        assertEquals(1, work.remainingSeconds)
+        assertEquals("Work — Round 1/1, Block 1/2", work.phaseLabel)
+
+        val rest = sequence.tick()
+        assertEquals(1, rest.remainingSeconds)
+        assertEquals("Rest — Round 1/1, Block 1/2", rest.phaseLabel)
+
+        val interBlockRest = sequence.tick()
+        assertEquals(75, interBlockRest.remainingSeconds)
+        assertEquals("Block Rest — Block 2/2", interBlockRest.phaseLabel)
+        assertEquals(RestTimerTone.DONE, interBlockRest.tone)
+        assertFalse(interBlockRest.isFinished)
+    }
+
+    @Test
     fun tabataSequence_withLeadIn_transitions_to_first_work_phase() {
         val sequence = IntervalTimerSequence(
             IntervalTimerState.TabataBlocks(
