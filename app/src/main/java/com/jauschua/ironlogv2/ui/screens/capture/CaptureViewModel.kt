@@ -412,6 +412,23 @@ class CaptureViewModel(
             }
     }
 
+    suspend fun logFinisher(movementId: Int, actualWeightLb: Double?, actualResistanceLevel: Int?) {
+        repo.logFinisher(sessionId, movementId, actualWeightLb, actualResistanceLevel)
+            .onSuccess { logged ->
+                val current = (_state.value as? UiState.Success)?.data ?: return@onSuccess
+                val finisher = current.finisher ?: return@onSuccess
+                val patched = finisher.copy(
+                    last_logged_weight_lb = logged.actual_weight_lb,
+                    last_logged_resistance_level = logged.actual_resistance_level,
+                )
+                _state.value = UiState.Success(current.copy(finisher = patched))
+            }
+            .onFailure { e ->
+                _uiError.value = (e as? IronLogException)?.error?.humanMessage() ?: e.message
+                    ?: "Failed to log finisher"
+            }
+    }
+
     suspend fun swapExercise(exerciseId: Int, newMovementId: Int, makePermanent: Boolean) {
         repo.swapExercise(sessionId, exerciseId, newMovementId, makePermanent)
             .onSuccess { updated ->

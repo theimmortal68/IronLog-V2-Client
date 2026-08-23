@@ -144,4 +144,16 @@ class CaptureRepo(private val apiClient: ApiClient, private val dao: CaptureDao)
     suspend fun substitutesFor(movementId: Int): Result<List<MovementSummary>> = runCatchingApi {
         apiClient.http.get("/movements/substitutes/$movementId").body()
     }
+
+    suspend fun logFinisher(
+        sessionId: Int,
+        movementId: Int,
+        actualWeightLb: Double? = null,
+        actualResistanceLevel: Int? = null,
+    ): Result<FinisherLogResponse> = runCatchingApi {
+        apiClient.http.post("/sessions/$sessionId/finisher/log") {
+            contentType(ContentType.Application.Json)
+            setBody(FinisherLogRequest(movementId, actualWeightLb, actualResistanceLevel))
+        }.body()
+    }
 }

@@ -39,6 +39,17 @@ interface IntervalTimerController {
     fun startTimeBasedIntervals(
         totalMinutes: Int,
         workSeconds: Int,
+        restSeconds: Int,
+        label: String,
+        leadInSeconds: Int = 0,
+    )
+    fun startEmomIntervals(totalMinutes: Int, repsPerMinute: Int, label: String, leadInSeconds: Int = 0)
+    fun startTabataIntervals(
+        workSeconds: Int,
+        restSeconds: Int,
+        roundsPerBlock: Int,
+        blocks: Int,
+        interBlockRestSeconds: Int,
         label: String,
         leadInSeconds: Int = 0,
     )
@@ -90,6 +101,7 @@ class InMemoryIntervalTimerController : IntervalTimerController {
     override fun startTimeBasedIntervals(
         totalMinutes: Int,
         workSeconds: Int,
+        restSeconds: Int,
         label: String,
         leadInSeconds: Int,
     ) {
@@ -101,6 +113,44 @@ class InMemoryIntervalTimerController : IntervalTimerController {
             } else {
                 _remainingSeconds.value = clampedIntervalWorkSeconds(workSeconds)
                 _phaseLabel.value = "Work"
+            }
+        } else {
+            stop()
+        }
+    }
+
+    override fun startEmomIntervals(totalMinutes: Int, repsPerMinute: Int, label: String, leadInSeconds: Int) {
+        if (totalMinutes > 0) {
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
+            if (leadInDuration > 0) {
+                _remainingSeconds.value = leadInDuration
+                _phaseLabel.value = COUNTDOWN_LEAD_IN_LABEL
+            } else {
+                _remainingSeconds.value = 60
+                _phaseLabel.value = intervalTimerEmomLabel(1, totalMinutes, repsPerMinute)
+            }
+        } else {
+            stop()
+        }
+    }
+
+    override fun startTabataIntervals(
+        workSeconds: Int,
+        restSeconds: Int,
+        roundsPerBlock: Int,
+        blocks: Int,
+        interBlockRestSeconds: Int,
+        label: String,
+        leadInSeconds: Int,
+    ) {
+        if (blocks > 0 && roundsPerBlock > 0) {
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
+            if (leadInDuration > 0) {
+                _remainingSeconds.value = leadInDuration
+                _phaseLabel.value = COUNTDOWN_LEAD_IN_LABEL
+            } else {
+                _remainingSeconds.value = workSeconds
+                _phaseLabel.value = intervalTimerTabataLabel("Work", 1, roundsPerBlock, 1, blocks)
             }
         } else {
             stop()
@@ -130,6 +180,7 @@ class AndroidIntervalTimerController(context: Context) : IntervalTimerController
     override fun startTimeBasedIntervals(
         totalMinutes: Int,
         workSeconds: Int,
+        restSeconds: Int,
         label: String,
         leadInSeconds: Int,
     ) {
@@ -137,6 +188,38 @@ class AndroidIntervalTimerController(context: Context) : IntervalTimerController
             appContext,
             totalMinutes,
             workSeconds,
+            restSeconds,
+            label,
+            leadInSeconds,
+        )
+    }
+
+    override fun startEmomIntervals(totalMinutes: Int, repsPerMinute: Int, label: String, leadInSeconds: Int) {
+        IntervalTimerService.startEmomIntervals(
+            appContext,
+            totalMinutes,
+            repsPerMinute,
+            label,
+            leadInSeconds,
+        )
+    }
+
+    override fun startTabataIntervals(
+        workSeconds: Int,
+        restSeconds: Int,
+        roundsPerBlock: Int,
+        blocks: Int,
+        interBlockRestSeconds: Int,
+        label: String,
+        leadInSeconds: Int,
+    ) {
+        IntervalTimerService.startTabataIntervals(
+            appContext,
+            workSeconds,
+            restSeconds,
+            roundsPerBlock,
+            blocks,
+            interBlockRestSeconds,
             label,
             leadInSeconds,
         )
@@ -153,6 +236,22 @@ internal sealed interface IntervalTimerState {
     data class TimeBased(
         val totalMinutes: Int,
         val workSeconds: Int,
+        val restSeconds: Int,
+        val label: String,
+        val leadInSeconds: Int = 0,
+    ) : IntervalTimerState
+    data class Emom(
+        val totalMinutes: Int,
+        val repsPerMinute: Int,
+        val label: String,
+        val leadInSeconds: Int = 0,
+    ) : IntervalTimerState
+    data class TabataBlocks(
+        val workSeconds: Int,
+        val restSeconds: Int,
+        val roundsPerBlock: Int,
+        val blocks: Int,
+        val interBlockRestSeconds: Int,
         val label: String,
         val leadInSeconds: Int = 0,
     ) : IntervalTimerState
@@ -167,8 +266,21 @@ internal data class IntervalTickResult(
 
 internal fun clampedIntervalWorkSeconds(workSeconds: Int): Int = workSeconds.coerceIn(1, 59)
 
+// Tabata phases have no sub-minute constraint (unlike TimeBased/Countdown, which must fit
+// inside a 60-second minute) -- only a lower bound of 1 second applies.
+internal fun clampedTabataSeconds(seconds: Int): Int = seconds.coerceAtLeast(1)
+
 internal fun intervalTimerRepBasedLabel(round: Int, totalMinutes: Int): String =
     "Minute $round of $totalMinutes"
+
+internal fun intervalTimerEmomLabel(round: Int, totalMinutes: Int, repsPerMinute: Int): String =
+    "$repsPerMinute reps — Round $round of $totalMinutes"
+
+internal fun intervalTimerTabataLabel(phase: String, round: Int, roundsPerBlock: Int, block: Int, blocks: Int): String =
+    "$phase — Round $round/$roundsPerBlock, Block $block/$blocks"
+
+internal fun intervalTimerTabataBlockRestLabel(block: Int, blocks: Int): String =
+    "Block Rest — Block $block/$blocks"
 
 internal fun intervalTimerToneForTransition(current: Int?): RestTimerTone? = when (current) {
     15 -> RestTimerTone.WARNING
@@ -178,7 +290,9 @@ internal fun intervalTimerToneForTransition(current: Int?): RestTimerTone? = whe
 
 internal class IntervalTimerSequence(private val state: IntervalTimerState) {
     private var currentRound: Int = 1
+    private var currentBlock: Int = 1
     private var isWorkPhase: Boolean = true
+    private var isInterBlockRestPhase: Boolean = false
     private var isLeadInPhase: Boolean = false
     private var remainingInPhase: Int = 0
     private var phaseLabel: String? = null
@@ -228,6 +342,45 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                     phaseLabel = "Work"
                 }
             }
+            is IntervalTimerState.Emom -> {
+                val leadInDuration = state.leadInSeconds.coerceAtLeast(0)
+                if (state.totalMinutes <= 0) {
+                    remainingInPhase = 0
+                    phaseLabel = null
+                } else if (leadInDuration > 0) {
+                    isLeadInPhase = true
+                    remainingInPhase = leadInDuration
+                    phaseLabel = COUNTDOWN_LEAD_IN_LABEL
+                } else {
+                    currentRound = 1
+                    remainingInPhase = 60
+                    phaseLabel = intervalTimerEmomLabel(currentRound, state.totalMinutes, state.repsPerMinute)
+                }
+            }
+            is IntervalTimerState.TabataBlocks -> {
+                val leadInDuration = state.leadInSeconds.coerceAtLeast(0)
+                if (state.blocks <= 0 || state.roundsPerBlock <= 0) {
+                    remainingInPhase = 0
+                    phaseLabel = null
+                } else if (leadInDuration > 0) {
+                    isLeadInPhase = true
+                    remainingInPhase = leadInDuration
+                    phaseLabel = COUNTDOWN_LEAD_IN_LABEL
+                } else {
+                    currentRound = 1
+                    currentBlock = 1
+                    isWorkPhase = true
+                    isInterBlockRestPhase = false
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
+                    phaseLabel = intervalTimerTabataLabel(
+                        "Work",
+                        currentRound,
+                        state.roundsPerBlock,
+                        currentBlock,
+                        state.blocks,
+                    )
+                }
+            }
         }
     }
 
@@ -247,6 +400,8 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 is IntervalTimerState.Countdown -> false
                 is IntervalTimerState.RepBased -> true
                 is IntervalTimerState.TimeBased -> true
+                is IntervalTimerState.Emom -> true
+                is IntervalTimerState.TabataBlocks -> true
             }
         }
         return IntervalTickResult(
@@ -355,8 +510,7 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                 }
                 if (isWorkPhase) {
                     isWorkPhase = false
-                    val workSec = clampedIntervalWorkSeconds(state.workSeconds)
-                    remainingInPhase = 60 - workSec
+                    remainingInPhase = clampedIntervalWorkSeconds(state.restSeconds)
                     phaseLabel = "Rest"
                 } else {
                     isWorkPhase = true
@@ -370,6 +524,135 @@ internal class IntervalTimerSequence(private val state: IntervalTimerState) {
                     phaseLabel = phaseLabel,
                     tone = RestTimerTone.DONE,
                     isFinished = false,
+                )
+            }
+            is IntervalTimerState.Emom -> {
+                if (isLeadInPhase) {
+                    isLeadInPhase = false
+                    currentRound = 1
+                    remainingInPhase = 60
+                    phaseLabel = intervalTimerEmomLabel(currentRound, state.totalMinutes, state.repsPerMinute)
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
+                if (currentRound >= state.totalMinutes) {
+                    return IntervalTickResult(
+                        remainingSeconds = null,
+                        phaseLabel = null,
+                        tone = RestTimerTone.DONE,
+                        isFinished = true,
+                    )
+                }
+                currentRound += 1
+                remainingInPhase = 60
+                phaseLabel = intervalTimerEmomLabel(currentRound, state.totalMinutes, state.repsPerMinute)
+                return IntervalTickResult(
+                    remainingSeconds = remainingInPhase,
+                    phaseLabel = phaseLabel,
+                    tone = RestTimerTone.DONE,
+                    isFinished = false,
+                )
+            }
+            is IntervalTimerState.TabataBlocks -> {
+                if (isLeadInPhase) {
+                    isLeadInPhase = false
+                    currentRound = 1
+                    currentBlock = 1
+                    isWorkPhase = true
+                    isInterBlockRestPhase = false
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
+                    phaseLabel = intervalTimerTabataLabel(
+                        "Work",
+                        currentRound,
+                        state.roundsPerBlock,
+                        currentBlock,
+                        state.blocks,
+                    )
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
+                if (isInterBlockRestPhase) {
+                    // Inter-block rest ended -> the new block/round were already set when this
+                    // phase was entered (see the rest-phase-ends branch below); resume work.
+                    isInterBlockRestPhase = false
+                    isWorkPhase = true
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
+                    phaseLabel = intervalTimerTabataLabel(
+                        "Work",
+                        currentRound,
+                        state.roundsPerBlock,
+                        currentBlock,
+                        state.blocks,
+                    )
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
+                if (isWorkPhase) {
+                    isWorkPhase = false
+                    remainingInPhase = clampedTabataSeconds(state.restSeconds)
+                    phaseLabel = intervalTimerTabataLabel(
+                        "Rest",
+                        currentRound,
+                        state.roundsPerBlock,
+                        currentBlock,
+                        state.blocks,
+                    )
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
+                // Rest phase just ended.
+                if (currentRound < state.roundsPerBlock) {
+                    currentRound += 1
+                    isWorkPhase = true
+                    remainingInPhase = clampedTabataSeconds(state.workSeconds)
+                    phaseLabel = intervalTimerTabataLabel(
+                        "Work",
+                        currentRound,
+                        state.roundsPerBlock,
+                        currentBlock,
+                        state.blocks,
+                    )
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
+                if (currentBlock < state.blocks) {
+                    currentRound = 1
+                    currentBlock += 1
+                    isInterBlockRestPhase = true
+                    remainingInPhase = clampedTabataSeconds(state.interBlockRestSeconds)
+                    phaseLabel = intervalTimerTabataBlockRestLabel(currentBlock, state.blocks)
+                    return IntervalTickResult(
+                        remainingSeconds = remainingInPhase,
+                        phaseLabel = phaseLabel,
+                        tone = RestTimerTone.DONE,
+                        isFinished = false,
+                    )
+                }
+                return IntervalTickResult(
+                    remainingSeconds = null,
+                    phaseLabel = null,
+                    tone = RestTimerTone.DONE,
+                    isFinished = true,
                 )
             }
         }
@@ -407,9 +690,39 @@ class IntervalTimerService : Service() {
             ACTION_START_TIME_BASED -> {
                 val totalMinutes = intent.getIntExtra(EXTRA_TOTAL_MINUTES, 0)
                 val workSeconds = intent.getIntExtra(EXTRA_WORK_SECONDS, 30)
+                val restSeconds = intent.getIntExtra(EXTRA_REST_SECONDS, 30)
                 val label = intent.getStringExtra(EXTRA_LABEL) ?: ""
                 val leadInSeconds = intent.getIntExtra(EXTRA_LEAD_IN_SECONDS, 0).coerceAtLeast(0)
-                startSequence(IntervalTimerState.TimeBased(totalMinutes, workSeconds, label, leadInSeconds))
+                startSequence(
+                    IntervalTimerState.TimeBased(totalMinutes, workSeconds, restSeconds, label, leadInSeconds),
+                )
+            }
+            ACTION_START_EMOM -> {
+                val totalMinutes = intent.getIntExtra(EXTRA_TOTAL_MINUTES, 0)
+                val repsPerMinute = intent.getIntExtra(EXTRA_REPS_PER_MINUTE, 0)
+                val label = intent.getStringExtra(EXTRA_LABEL) ?: ""
+                val leadInSeconds = intent.getIntExtra(EXTRA_LEAD_IN_SECONDS, 0).coerceAtLeast(0)
+                startSequence(IntervalTimerState.Emom(totalMinutes, repsPerMinute, label, leadInSeconds))
+            }
+            ACTION_START_TABATA -> {
+                val workSeconds = intent.getIntExtra(EXTRA_WORK_SECONDS, 20)
+                val restSeconds = intent.getIntExtra(EXTRA_REST_SECONDS, 10)
+                val roundsPerBlock = intent.getIntExtra(EXTRA_ROUNDS_PER_BLOCK, 0)
+                val blocks = intent.getIntExtra(EXTRA_BLOCKS, 0)
+                val interBlockRestSeconds = intent.getIntExtra(EXTRA_INTER_BLOCK_REST_SECONDS, 0)
+                val label = intent.getStringExtra(EXTRA_LABEL) ?: ""
+                val leadInSeconds = intent.getIntExtra(EXTRA_LEAD_IN_SECONDS, 0).coerceAtLeast(0)
+                startSequence(
+                    IntervalTimerState.TabataBlocks(
+                        workSeconds,
+                        restSeconds,
+                        roundsPerBlock,
+                        blocks,
+                        interBlockRestSeconds,
+                        label,
+                        leadInSeconds,
+                    ),
+                )
             }
             ACTION_STOP -> stopTimer()
         }
@@ -560,10 +873,17 @@ class IntervalTimerService : Service() {
         private const val ACTION_START_COUNTDOWN = "com.jauschua.ironlogv2.interval_timer.START_COUNTDOWN"
         private const val ACTION_START_REP_BASED = "com.jauschua.ironlogv2.interval_timer.START_REP_BASED"
         private const val ACTION_START_TIME_BASED = "com.jauschua.ironlogv2.interval_timer.START_TIME_BASED"
+        private const val ACTION_START_EMOM = "com.jauschua.ironlogv2.interval_timer.START_EMOM"
+        private const val ACTION_START_TABATA = "com.jauschua.ironlogv2.interval_timer.START_TABATA"
         private const val ACTION_STOP = "com.jauschua.ironlogv2.interval_timer.STOP"
         private const val EXTRA_SECONDS = "seconds"
         private const val EXTRA_TOTAL_MINUTES = "totalMinutes"
         private const val EXTRA_WORK_SECONDS = "workSeconds"
+        private const val EXTRA_REST_SECONDS = "restSeconds"
+        private const val EXTRA_REPS_PER_MINUTE = "repsPerMinute"
+        private const val EXTRA_ROUNDS_PER_BLOCK = "roundsPerBlock"
+        private const val EXTRA_BLOCKS = "blocks"
+        private const val EXTRA_INTER_BLOCK_REST_SECONDS = "interBlockRestSeconds"
         private const val EXTRA_LABEL = "label"
         private const val EXTRA_LEAD_IN_SECONDS = "leadInSeconds"
         private const val DONE_TONE_TEARDOWN_DELAY_MS = 450L
@@ -606,6 +926,7 @@ class IntervalTimerService : Service() {
             context: Context,
             totalMinutes: Int,
             workSeconds: Int,
+            restSeconds: Int,
             label: String,
             leadInSeconds: Int = 0,
         ) {
@@ -615,6 +936,49 @@ class IntervalTimerService : Service() {
                 .setAction(ACTION_START_TIME_BASED)
                 .putExtra(EXTRA_TOTAL_MINUTES, totalMinutes)
                 .putExtra(EXTRA_WORK_SECONDS, workSeconds)
+                .putExtra(EXTRA_REST_SECONDS, restSeconds)
+                .putExtra(EXTRA_LABEL, label)
+                .putExtra(EXTRA_LEAD_IN_SECONDS, leadInDuration)
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun startEmomIntervals(
+            context: Context,
+            totalMinutes: Int,
+            repsPerMinute: Int,
+            label: String,
+            leadInSeconds: Int = 0,
+        ) {
+            if (totalMinutes <= 0) return
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
+            val intent = Intent(context, IntervalTimerService::class.java)
+                .setAction(ACTION_START_EMOM)
+                .putExtra(EXTRA_TOTAL_MINUTES, totalMinutes)
+                .putExtra(EXTRA_REPS_PER_MINUTE, repsPerMinute)
+                .putExtra(EXTRA_LABEL, label)
+                .putExtra(EXTRA_LEAD_IN_SECONDS, leadInDuration)
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun startTabataIntervals(
+            context: Context,
+            workSeconds: Int,
+            restSeconds: Int,
+            roundsPerBlock: Int,
+            blocks: Int,
+            interBlockRestSeconds: Int,
+            label: String,
+            leadInSeconds: Int = 0,
+        ) {
+            if (blocks <= 0 || roundsPerBlock <= 0) return
+            val leadInDuration = leadInSeconds.coerceAtLeast(0)
+            val intent = Intent(context, IntervalTimerService::class.java)
+                .setAction(ACTION_START_TABATA)
+                .putExtra(EXTRA_WORK_SECONDS, workSeconds)
+                .putExtra(EXTRA_REST_SECONDS, restSeconds)
+                .putExtra(EXTRA_ROUNDS_PER_BLOCK, roundsPerBlock)
+                .putExtra(EXTRA_BLOCKS, blocks)
+                .putExtra(EXTRA_INTER_BLOCK_REST_SECONDS, interBlockRestSeconds)
                 .putExtra(EXTRA_LABEL, label)
                 .putExtra(EXTRA_LEAD_IN_SECONDS, leadInDuration)
             ContextCompat.startForegroundService(context, intent)

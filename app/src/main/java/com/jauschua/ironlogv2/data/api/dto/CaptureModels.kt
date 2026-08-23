@@ -46,10 +46,29 @@ import kotlinx.serialization.json.JsonObject
 )
 @Serializable data class FinisherOut(
     val exercise_name: String,
+    // Safe default so an old-server/new-APK version skew that omits this field doesn't
+    // throw MissingFieldException and blank the whole capture screen — a missing/omitted
+    // id degrades to the sentinel below instead. Callers must guard on movement_id > 0
+    // before treating it as a real id (e.g. before enabling the finisher Log action).
+    val movement_id: Int = -1,
     val duration_minutes: Int,
     val params: JsonObject = JsonObject(emptyMap()),
     val current_duration_seconds: Int? = null,
     val current_rope: String? = null,
+    val last_logged_weight_lb: Double? = null,
+    val last_logged_resistance_level: Int? = null,
+)
+@Serializable data class FinisherLogRequest(
+    val movement_id: Int,
+    val actual_weight_lb: Double? = null,
+    val actual_resistance_level: Int? = null,
+    val notes: String? = null,
+)
+@Serializable data class FinisherLogResponse(
+    val id: Int,
+    val movement_id: Int,
+    val actual_weight_lb: Double?,
+    val actual_resistance_level: Int?,
 )
 @Serializable data class WarmupOut(
     val movement_flow_seconds: Int,

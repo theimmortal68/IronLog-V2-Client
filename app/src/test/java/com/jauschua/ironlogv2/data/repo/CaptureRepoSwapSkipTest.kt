@@ -93,4 +93,53 @@ class CaptureRepoSwapSkipTest {
         assertEquals("QUADS", list.first().primary_muscle)
         assertEquals("ACTIVE", list.first().status)
     }
+
+    @Test
+    fun `logFinisher posts movement_id and actuals to the finisher log endpoint`() = runBlocking {
+        var capturedPath: String? = null
+        var capturedMethod: HttpMethod? = null
+        var capturedBody: String? = null
+        val engine = MockEngine { req ->
+            capturedPath = req.url.encodedPath
+            capturedMethod = req.method
+            capturedBody = (req.body as io.ktor.http.content.TextContent).text
+            respond(
+                """{"id":1,"movement_id":9,"actual_weight_lb":105.0,"actual_resistance_level":null}""",
+                HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val repo = CaptureRepo(ApiClient(engine = engine), db().captureDao())
+
+        val res = repo.logFinisher(sessionId = 7, movementId = 9, actualWeightLb = 105.0)
+
+        assertTrue(res.isSuccess)
+        assertEquals("/sessions/7/finisher/log", capturedPath)
+        assertEquals(HttpMethod.Post, capturedMethod)
+        assertTrue(capturedBody!!.contains("\"movement_id\":9"))
+        assertTrue(capturedBody!!.contains("\"actual_weight_lb\":105.0"))
+        val out = res.getOrThrow()
+        assertEquals(9, out.movement_id)
+        assertEquals(105.0, out.actual_weight_lb)
+    }
+
+    @Test
+    fun `logFinisher omits null actuals gracefully and still posts movement_id`() = runBlocking {
+        var capturedBody: String? = null
+        val engine = MockEngine { req ->
+            capturedBody = (req.body as io.ktor.http.content.TextContent).text
+            respond(
+                """{"id":2,"movement_id":11,"actual_weight_lb":null,"actual_resistance_level":6}""",
+                HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val repo = CaptureRepo(ApiClient(engine = engine), db().captureDao())
+
+        val res = repo.logFinisher(sessionId = 7, movementId = 11, actualResistanceLevel = 6)
+
+        assertTrue(res.isSuccess)
+        assertTrue(capturedBody!!.contains("\"movement_id\":11"))
+        assertTrue(capturedBody!!.contains("\"actual_resistance_level\":6"))
+        val out = res.getOrThrow()
+        assertEquals(6, out.actual_resistance_level)
+    }
 }
