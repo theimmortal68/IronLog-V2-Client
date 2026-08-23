@@ -1073,6 +1073,9 @@ private fun FinisherLogRow(
             },
         )
     }
+    val parsedWeight = value.toDoubleOrNull()
+    val parsedResistance = value.toIntOrNull()
+    val canLog = canLogFinisher(kind, value, finisher.movement_id)
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1089,10 +1092,15 @@ private fun FinisherLogRow(
             modifier = Modifier.weight(1f),
         )
         TextButton(
+            enabled = canLog,
             onClick = {
+                // Only fire when the field parses to a valid non-null value — the server
+                // treats weight/resistance as null-if-absent, and a null/null FinisherLog
+                // row would permanently mask the last-logged prefill (see program.py's
+                // "exactly one of actual_weight_lb / actual_resistance_level" invariant).
                 when (kind) {
-                    FinisherLoggableKind.WEIGHT -> onLogFinisher(value.toDoubleOrNull(), null)
-                    FinisherLoggableKind.RESISTANCE -> onLogFinisher(null, value.toIntOrNull())
+                    FinisherLoggableKind.WEIGHT -> parsedWeight?.let { onLogFinisher(it, null) }
+                    FinisherLoggableKind.RESISTANCE -> parsedResistance?.let { onLogFinisher(null, it) }
                 }
             },
         ) {
@@ -1514,6 +1522,23 @@ internal fun finisherLoggableKind(params: JsonObject): FinisherLoggableKind? = w
     else -> null
 }
 
+/**
+ * Gates the [FinisherLogRow] "Log" button/action. Requires BOTH a valid [movementId] (>0 — a
+ * missing/omitted id from an old server defaults to the -1 sentinel on [FinisherOut.movement_id])
+ * AND that [rawValue] parses to a real, non-null numeric value for [kind]. Without this gate a
+ * blank/unparseable field would call `onLogFinisher(null, null)`, and the server writes that as a
+ * `FinisherLog` row with BOTH `actual_weight_lb`/`actual_resistance_level` null — permanently
+ * masking whatever weight/resistance was actually last logged (see program.py's "exactly one of
+ * actual_weight_lb / actual_resistance_level" invariant), with no delete path from the client.
+ */
+internal fun canLogFinisher(kind: FinisherLoggableKind, rawValue: String, movementId: Int): Boolean {
+    if (movementId <= 0) return false
+    return when (kind) {
+        FinisherLoggableKind.WEIGHT -> rawValue.toDoubleOrNull() != null
+        FinisherLoggableKind.RESISTANCE -> rawValue.toIntOrNull() != null
+    }
+}
+
 internal fun humanizeFinisherName(name: String): String =
     name.replace("_", " ")
         .split(" ")
@@ -1548,8 +1573,13 @@ internal fun finisherTimerMode(finisher: FinisherOut): FinisherTimerMode {
             val roundsPerBlock = params.intParam(PARAM_ROUNDS_PER_BLOCK)
             val blocks = params.intParam(PARAM_BLOCKS)
             val interBlockRestSeconds = params.intParam(PARAM_INTER_BLOCK_REST_SECONDS)
+            // blocks/roundsPerBlock must also be positive: IntervalTimerService.startTabataIntervals
+            // silently no-ops when blocks <= 0 || roundsPerBlock <= 0, which would otherwise make the
+            // Start button inert with zero feedback. Fall through to the legacy heuristic below,
+            // consistent with how other malformed tabata params are already handled here.
             if (workSeconds != null && restSeconds != null && roundsPerBlock != null &&
-                blocks != null && interBlockRestSeconds != null
+                blocks != null && interBlockRestSeconds != null &&
+                roundsPerBlock > 0 && blocks > 0
             ) {
                 return FinisherTimerMode.Tabata(
                     workSeconds = workSeconds,

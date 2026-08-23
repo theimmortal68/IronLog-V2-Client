@@ -12,6 +12,7 @@ import com.jauschua.ironlogv2.ui.screens.capture.effectiveLoadPrefill
 import com.jauschua.ironlogv2.ui.screens.capture.effectiveRepsPrefill
 import com.jauschua.ironlogv2.ui.screens.capture.FinisherLoggableKind
 import com.jauschua.ironlogv2.ui.screens.capture.FinisherTimerMode
+import com.jauschua.ironlogv2.ui.screens.capture.canLogFinisher
 import com.jauschua.ironlogv2.ui.screens.capture.finisherLoggableKind
 import com.jauschua.ironlogv2.ui.screens.capture.finisherTimerMode
 import com.jauschua.ironlogv2.ui.screens.capture.flattenPrescription
@@ -303,6 +304,59 @@ class CaptureScreenLogicTest {
         )
     }
 
+    @Test
+    fun finisherTimerMode_tabata_falls_through_when_blocks_is_zero() {
+        // scheme=tabata with all fields present but blocks=0 -- would pass the earlier
+        // null-check but IntervalTimerService.startTabataIntervals silently no-ops on
+        // blocks <= 0, so the dispatcher must reject this and fall through instead.
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            movement_id = 1,
+            duration_minutes = 6,
+            current_duration_seconds = 35,
+            params = JsonObject(
+                mapOf(
+                    "scheme" to JsonPrimitive("tabata"),
+                    "work_seconds" to JsonPrimitive(20),
+                    "rest_seconds" to JsonPrimitive(10),
+                    "rounds_per_block" to JsonPrimitive(8),
+                    "blocks" to JsonPrimitive(0),
+                    "inter_block_rest_seconds" to JsonPrimitive(75),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.TimeBased(totalMinutes = 6, workSeconds = 35, restSeconds = 25, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
+    @Test
+    fun finisherTimerMode_tabata_falls_through_when_rounds_per_block_is_negative() {
+        val finisher = FinisherOut(
+            exercise_name = "jump_rope",
+            movement_id = 1,
+            duration_minutes = 6,
+            current_duration_seconds = 35,
+            params = JsonObject(
+                mapOf(
+                    "scheme" to JsonPrimitive("tabata"),
+                    "work_seconds" to JsonPrimitive(20),
+                    "rest_seconds" to JsonPrimitive(10),
+                    "rounds_per_block" to JsonPrimitive(-1),
+                    "blocks" to JsonPrimitive(2),
+                    "inter_block_rest_seconds" to JsonPrimitive(75),
+                ),
+            ),
+        )
+
+        assertEquals(
+            FinisherTimerMode.TimeBased(totalMinutes = 6, workSeconds = 35, restSeconds = 25, label = "Jump Rope"),
+            finisherTimerMode(finisher),
+        )
+    }
+
     // ── Spec 30: finisherLoggableKind — which finishers render the weight/resistance log row ──
 
     @Test
@@ -331,6 +385,47 @@ class CaptureScreenLogicTest {
     @Test
     fun finisherLoggableKind_null_when_neither_present() {
         assertNull(finisherLoggableKind(JsonObject(mapOf("equipment" to JsonPrimitive("sandbag_100")))))
+    }
+
+    // ── HIGH review finding: canLogFinisher gates the Log button/action so a blank or ─────
+    // unparseable field can never fire onLogFinisher(null, null) -- see the doc comment on
+    // canLogFinisher for why a null/null FinisherLog row is destructive server-side.
+
+    @Test
+    fun canLogFinisher_true_for_a_valid_weight_value() {
+        assertEquals(true, canLogFinisher(FinisherLoggableKind.WEIGHT, "135", movementId = 7))
+        assertEquals(true, canLogFinisher(FinisherLoggableKind.WEIGHT, "137.5", movementId = 7))
+    }
+
+    @Test
+    fun canLogFinisher_true_for_a_valid_resistance_value() {
+        assertEquals(true, canLogFinisher(FinisherLoggableKind.RESISTANCE, "8", movementId = 7))
+    }
+
+    @Test
+    fun canLogFinisher_false_for_blank_value() {
+        assertEquals(false, canLogFinisher(FinisherLoggableKind.WEIGHT, "", movementId = 7))
+        assertEquals(false, canLogFinisher(FinisherLoggableKind.RESISTANCE, "", movementId = 7))
+    }
+
+    @Test
+    fun canLogFinisher_false_for_unparseable_value() {
+        assertEquals(false, canLogFinisher(FinisherLoggableKind.WEIGHT, "abc", movementId = 7))
+        assertEquals(false, canLogFinisher(FinisherLoggableKind.RESISTANCE, "abc", movementId = 7))
+    }
+
+    @Test
+    fun canLogFinisher_false_when_resistance_value_is_a_decimal_not_an_int() {
+        // "8.5" does not parse via toIntOrNull -- resistance is strictly Int-typed server-side.
+        assertEquals(false, canLogFinisher(FinisherLoggableKind.RESISTANCE, "8.5", movementId = 7))
+    }
+
+    @Test
+    fun canLogFinisher_false_when_movement_id_is_the_missing_field_sentinel() {
+        // FinisherOut.movement_id defaults to -1 when a server response omits the field
+        // (version skew) -- must never allow logging against a non-existent movement id.
+        assertEquals(false, canLogFinisher(FinisherLoggableKind.WEIGHT, "135", movementId = -1))
+        assertEquals(false, canLogFinisher(FinisherLoggableKind.WEIGHT, "135", movementId = 0))
     }
 
     // ── Spec 15: warmup jump-rope interval timer extraction ─────────────────────────────

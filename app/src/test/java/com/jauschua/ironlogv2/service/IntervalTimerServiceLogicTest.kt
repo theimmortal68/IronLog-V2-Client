@@ -824,6 +824,55 @@ class IntervalTimerServiceLogicTest {
     }
 
     @Test
+    fun tabataSequence_zero_or_negative_phase_durations_are_clamped_not_early_terminated() {
+        // workSeconds=0, restSeconds=-5, interBlockRestSeconds=0 would all resolve
+        // remainingInPhase <= 0 without clamping, which the tick loop's guard would treat as
+        // "finished" -- terminating the whole workout one tick into what should be a normal
+        // multi-round session. Clamped to 1..59 like TimeBased/Countdown, the sequence must
+        // run its full course instead.
+        val sequence = IntervalTimerSequence(
+            IntervalTimerState.TabataBlocks(
+                workSeconds = 0,
+                restSeconds = -5,
+                roundsPerBlock = 2,
+                blocks = 2,
+                interBlockRestSeconds = 0,
+                label = "Degenerate",
+            )
+        )
+
+        val work = sequence.initialResult()
+        assertEquals(1, work.remainingSeconds)
+        assertEquals("Work — Round 1/2, Block 1/2", work.phaseLabel)
+        assertFalse(work.isFinished)
+
+        val rest = sequence.tick()
+        assertEquals(1, rest.remainingSeconds)
+        assertEquals("Rest — Round 1/2, Block 1/2", rest.phaseLabel)
+        assertFalse(rest.isFinished)
+
+        val round2Work = sequence.tick()
+        assertEquals(1, round2Work.remainingSeconds)
+        assertEquals("Work — Round 2/2, Block 1/2", round2Work.phaseLabel)
+        assertFalse(round2Work.isFinished)
+
+        val round2Rest = sequence.tick()
+        assertEquals(1, round2Rest.remainingSeconds)
+        assertEquals("Rest — Round 2/2, Block 1/2", round2Rest.phaseLabel)
+        assertFalse(round2Rest.isFinished)
+
+        val interBlockRest = sequence.tick()
+        assertEquals(1, interBlockRest.remainingSeconds)
+        assertEquals("Block Rest — Block 2/2", interBlockRest.phaseLabel)
+        assertFalse(interBlockRest.isFinished)
+
+        val block2Work = sequence.tick()
+        assertEquals(1, block2Work.remainingSeconds)
+        assertEquals("Work — Round 1/2, Block 2/2", block2Work.phaseLabel)
+        assertFalse(block2Work.isFinished)
+    }
+
+    @Test
     fun defensiveNoOp_for_zero_or_negative_durations() {
         val zeroCountdown = IntervalTimerSequence(IntervalTimerState.Countdown(0, "Label"))
         assertTrue(zeroCountdown.initialResult().isFinished)
