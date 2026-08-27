@@ -987,6 +987,165 @@ class CaptureScreenLogicTest {
     }
 
     @Test
+    fun carryForward_does_not_seed_from_or_prefill_warmup_sets() {
+        val movementId = 5
+        val plannedSets = listOf(
+            PlannedSetOut(
+                id = 1, set_index = 0, set_role = "RAMP", is_warmup = true,
+                target_load = 45.0, target_reps_low = 10, target_reps_high = 10,
+            ),
+            PlannedSetOut(
+                id = 2, set_index = 1, set_role = "RAMP", is_warmup = true,
+                target_load = 95.0, target_reps_low = 8, target_reps_high = 8,
+            ),
+            PlannedSetOut(
+                id = 3, set_index = 2, set_role = "RAMP", is_warmup = true,
+                target_load = 135.0, target_reps_low = 5, target_reps_high = 5,
+            ),
+            PlannedSetOut(
+                id = 4, set_index = 3, set_role = "WORKING", is_warmup = false,
+                target_load = 225.0, target_reps_low = 5, target_reps_high = 5,
+            ),
+            PlannedSetOut(
+                id = 5, set_index = 4, set_role = "WORKING", is_warmup = false,
+                target_load = 225.0, target_reps_low = 5, target_reps_high = 5,
+            ),
+        )
+        val workingPlannedSets = plannedSets.filterNot { it.is_warmup }
+        val loadPlanIsFlat = isFlatAcrossSets(workingPlannedSets.map { it.target_load })
+        val repsPlanIsFlat = isFlatAcrossRepTargets(
+            workingPlannedSets.map { it.target_reps_low to it.target_reps_high },
+        )
+        var carriedLoad = emptyMap<Int, Double>()
+        var carriedReps = emptyMap<Int, Int>()
+
+        carriedLoad = withCarriedLoad(carriedLoad, movementId, newLoad = 55.0, isWarmup = plannedSets[0].is_warmup)
+        carriedReps = withCarriedReps(carriedReps, movementId, newReps = 12, isWarmup = plannedSets[0].is_warmup)
+
+        assertEquals(
+            "warmup 2 must keep its prescribed load, not warmup 1's logged actual",
+            "95",
+            effectiveLoadPrefill(
+                carriedLoad,
+                movementId,
+                targetLoad = plannedSets[1].target_load,
+                planIsFlat = loadPlanIsFlat,
+                isWarmup = plannedSets[1].is_warmup,
+            ),
+        )
+        assertEquals(
+            "warmup 2 must keep its prescribed reps, not warmup 1's logged actual",
+            "8",
+            effectiveRepsPrefill(
+                carriedReps,
+                movementId,
+                plannedSet = plannedSets[1],
+                planIsFlat = repsPlanIsFlat,
+                isWarmup = plannedSets[1].is_warmup,
+            ),
+        )
+
+        carriedLoad = withCarriedLoad(carriedLoad, movementId, newLoad = 145.0, isWarmup = plannedSets[2].is_warmup)
+        carriedReps = withCarriedReps(carriedReps, movementId, newReps = 6, isWarmup = plannedSets[2].is_warmup)
+
+        assertEquals(
+            "first working set must keep its prescribed load, not the last warmup's logged actual",
+            "225",
+            effectiveLoadPrefill(
+                carriedLoad,
+                movementId,
+                targetLoad = plannedSets[3].target_load,
+                planIsFlat = loadPlanIsFlat,
+                isWarmup = plannedSets[3].is_warmup,
+            ),
+        )
+        assertEquals(
+            "first working set must keep its prescribed reps, not the last warmup's logged actual",
+            "5",
+            effectiveRepsPrefill(
+                carriedReps,
+                movementId,
+                plannedSet = plannedSets[3],
+                planIsFlat = repsPlanIsFlat,
+                isWarmup = plannedSets[3].is_warmup,
+            ),
+        )
+    }
+
+    @Test
+    fun effectivePrefills_keep_warmup_prescription_even_when_movement_has_carried_values() {
+        val warmup = PlannedSetOut(
+            id = 1, set_index = 0, set_role = "RAMP", is_warmup = true,
+            target_load = 95.0, target_reps_low = 8, target_reps_high = 8,
+        )
+
+        assertEquals(
+            "95",
+            effectiveLoadPrefill(
+                mapOf(5 to 225.0),
+                movementId = 5,
+                targetLoad = warmup.target_load,
+                planIsFlat = true,
+                isWarmup = warmup.is_warmup,
+            ),
+        )
+        assertEquals(
+            "8",
+            effectiveRepsPrefill(
+                mapOf(5 to 6),
+                movementId = 5,
+                plannedSet = warmup,
+                planIsFlat = true,
+                isWarmup = warmup.is_warmup,
+            ),
+        )
+    }
+
+    @Test
+    fun carryForward_still_fires_between_working_sets_when_warmups_are_present() {
+        // Over-gating check: the warmup exclusion (spec 40) must not collaterally break
+        // legitimate working-set-to-working-set carry-forward in the same exercise.
+        val movementId = 5
+        val workingSet1 = PlannedSetOut(
+            id = 10, set_index = 0, set_role = "WORKING", is_warmup = false,
+            target_load = 225.0, target_reps_low = 5, target_reps_high = 5,
+        )
+        val workingSet2 = PlannedSetOut(
+            id = 11, set_index = 1, set_role = "WORKING", is_warmup = false,
+            target_load = 225.0, target_reps_low = 5, target_reps_high = 5,
+        )
+        var carriedLoad = emptyMap<Int, Double>()
+        var carriedReps = emptyMap<Int, Int>()
+
+        // Athlete corrected working set 1 up to 230 (heavier than prescribed 225).
+        carriedLoad = withCarriedLoad(carriedLoad, movementId, newLoad = 230.0, isWarmup = workingSet1.is_warmup)
+        carriedReps = withCarriedReps(carriedReps, movementId, newReps = 6, isWarmup = workingSet1.is_warmup)
+
+        assertEquals(
+            "working set 2 must still carry forward working set 1's corrected load",
+            "230",
+            effectiveLoadPrefill(
+                carriedLoad,
+                movementId,
+                targetLoad = workingSet2.target_load,
+                planIsFlat = true,
+                isWarmup = workingSet2.is_warmup,
+            ),
+        )
+        assertEquals(
+            "working set 2 must still carry forward working set 1's corrected reps",
+            "6",
+            effectiveRepsPrefill(
+                carriedReps,
+                movementId,
+                plannedSet = workingSet2,
+                planIsFlat = true,
+                isWarmup = workingSet2.is_warmup,
+            ),
+        )
+    }
+
+    @Test
     fun isFlatAcrossRepTargets_true_when_all_non_null_targets_match() {
         assertEquals(true, isFlatAcrossRepTargets(listOf(8 to 8, 8 to 8, 8 to 8)))
     }
@@ -1088,6 +1247,12 @@ class CaptureScreenLogicTest {
         },
     )
 
+    private fun exerciseWithPlannedSets(exerciseId: Int, movementId: Int, plannedSets: List<PlannedSetOut>) = ExerciseOut(
+        id = exerciseId, movement_id = movementId, movement_name = "movement-$movementId",
+        order_index = 0, scheme = "STRAIGHT", objective = "",
+        planned_sets = plannedSets,
+    )
+
     private fun sessionOf(vararg exercises: ExerciseOut) = SessionDetailResponse(
         id = 1, date = "2026-08-16", day_role = "PUSH", phase = "BASE", status = "IN_PROGRESS",
         groups = listOf(
@@ -1159,6 +1324,89 @@ class CaptureScreenLogicTest {
 
         assertEquals(emptyMap<Int, Double>(), reconstructCarriedLoad(session, emptyMap()))
         assertEquals(emptyMap<Int, Int>(), reconstructCarriedReps(session, emptyMap()))
+    }
+
+    @Test
+    fun reconstructCarriedLoad_and_reps_ignore_logged_warmup_actuals() {
+        val plannedSets = listOf(
+            PlannedSetOut(
+                id = 100, set_index = 0, set_role = "RAMP", is_warmup = true,
+                target_load = 95.0, target_reps_low = 8, target_reps_high = 8,
+            ),
+            PlannedSetOut(
+                id = 101, set_index = 1, set_role = "RAMP", is_warmup = true,
+                target_load = 135.0, target_reps_low = 5, target_reps_high = 5,
+            ),
+            PlannedSetOut(
+                id = 102, set_index = 2, set_role = "WORKING", is_warmup = false,
+                target_load = 225.0, target_reps_low = 5, target_reps_high = 5,
+            ),
+        )
+        val session = sessionOf(exerciseWithPlannedSets(exerciseId = 1, movementId = 36, plannedSets = plannedSets))
+        val loggedActuals = mapOf(
+            (100 to 0) to LoggedSetActual(actualLoad = 100.0, actualReps = 9, tap = null),
+            (101 to 0) to LoggedSetActual(actualLoad = 145.0, actualReps = 6, tap = null),
+        )
+
+        assertEquals(emptyMap<Int, Double>(), reconstructCarriedLoad(session, loggedActuals))
+        assertEquals(emptyMap<Int, Int>(), reconstructCarriedReps(session, loggedActuals))
+        assertEquals(
+            "225",
+            effectiveLoadPrefill(
+                reconstructCarriedLoad(session, loggedActuals),
+                movementId = 36,
+                targetLoad = plannedSets[2].target_load,
+                planIsFlat = true,
+                isWarmup = plannedSets[2].is_warmup,
+            ),
+        )
+    }
+
+    @Test
+    fun reconstructCarriedLoad_and_reps_use_the_logged_working_set_when_warmups_are_also_logged() {
+        // Mixed case: a warmup AND a working set both logged in the same session. Reconstruction
+        // must surface the working set's value (for a later working-set prefill to carry from
+        // after a relaunch), not fall back to emptyMap() just because a warmup was also present.
+        val plannedSets = listOf(
+            PlannedSetOut(
+                id = 100, set_index = 0, set_role = "RAMP", is_warmup = true,
+                target_load = 95.0, target_reps_low = 8, target_reps_high = 8,
+            ),
+            PlannedSetOut(
+                id = 101, set_index = 1, set_role = "WORKING", is_warmup = false,
+                target_load = 225.0, target_reps_low = 5, target_reps_high = 5,
+            ),
+            PlannedSetOut(
+                id = 102, set_index = 2, set_role = "WORKING", is_warmup = false,
+                target_load = 225.0, target_reps_low = 5, target_reps_high = 5,
+            ),
+        )
+        val session = sessionOf(exerciseWithPlannedSets(exerciseId = 1, movementId = 36, plannedSets = plannedSets))
+        val loggedActuals = mapOf(
+            (100 to 0) to LoggedSetActual(actualLoad = 100.0, actualReps = 9, tap = null),
+            (101 to 0) to LoggedSetActual(actualLoad = 230.0, actualReps = 6, tap = null),
+        )
+
+        assertEquals(
+            "the warmup's logged actual must not appear in the reconstructed carry map",
+            mapOf(36 to 230.0),
+            reconstructCarriedLoad(session, loggedActuals),
+        )
+        assertEquals(
+            mapOf(36 to 6),
+            reconstructCarriedReps(session, loggedActuals),
+        )
+        assertEquals(
+            "the second working set must prefill from the reconstructed working-set value",
+            "230",
+            effectiveLoadPrefill(
+                reconstructCarriedLoad(session, loggedActuals),
+                movementId = 36,
+                targetLoad = plannedSets[2].target_load,
+                planIsFlat = true,
+                isWarmup = plannedSets[2].is_warmup,
+            ),
+        )
     }
 
     // ── Spec 13: GIANT_SET round interleaving verification ──────────────────────────────
