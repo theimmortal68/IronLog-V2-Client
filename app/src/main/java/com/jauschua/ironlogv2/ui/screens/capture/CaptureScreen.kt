@@ -228,6 +228,7 @@ private fun SessionContent(
                 currentExercise?.movement_id ?: -1,
                 currentSet?.target_load,
                 loadPlanIsFlat,
+                isWarmup = currentSet?.is_warmup == true,
             ),
         )
     }
@@ -243,6 +244,7 @@ private fun SessionContent(
                 currentExercise?.movement_id ?: -1,
                 currentSet?.target_load,
                 loadPlanIsFlat,
+                isWarmup = currentSet?.is_warmup == true,
             )
             // TEMP diagnostic logging (spec 13 follow-up) for the still-unconfirmed
             // GIANT_SET carry-forward report — remove once the root cause is pinned
@@ -263,6 +265,7 @@ private fun SessionContent(
                 currentExercise?.movement_id ?: -1,
                 currentSet,
                 repsPlanIsFlat,
+                isWarmup = currentSet?.is_warmup == true,
             ),
         )
     }
@@ -273,6 +276,7 @@ private fun SessionContent(
                 currentExercise?.movement_id ?: -1,
                 currentSet,
                 repsPlanIsFlat,
+                isWarmup = currentSet?.is_warmup == true,
             )
             // TEMP diagnostic logging (mirrors the "CarryFwd" load diagnostic, spec 13
             // follow-up) for the still-unconfirmed reps carry-forward report — remove
@@ -571,7 +575,12 @@ private fun SessionContent(
                                             setLoad = it
                                             currentExercise?.let { ex ->
                                                 carriedLoadByMovement =
-                                                    withCarriedLoad(carriedLoadByMovement, ex.movement_id, it.toDoubleOrNull())
+                                                    withCarriedLoad(
+                                                        carriedLoadByMovement,
+                                                        ex.movement_id,
+                                                        it.toDoubleOrNull(),
+                                                        isWarmup = plannedSet.is_warmup,
+                                                    )
                                                 // TEMP diagnostic logging (spec 13 follow-up), see the
                                                 // matching read-side log in the LaunchedEffect above.
                                                 Log.d(
@@ -584,7 +593,12 @@ private fun SessionContent(
                                             setReps = it
                                             currentExercise?.let { ex ->
                                                 carriedRepsByMovement =
-                                                    withCarriedReps(carriedRepsByMovement, ex.movement_id, it.toIntOrNull())
+                                                    withCarriedReps(
+                                                        carriedRepsByMovement,
+                                                        ex.movement_id,
+                                                        it.toIntOrNull(),
+                                                        isWarmup = plannedSet.is_warmup,
+                                                    )
                                                 Log.d(
                                                     "CarryFwd",
                                                     "REPS WRITE cursor=$currentPlannedSetId movement=${ex.movement_id} value=$it",
@@ -714,7 +728,12 @@ private fun SessionContent(
                                             setLoad = it
                                             currentExercise?.let { ex ->
                                                 carriedLoadByMovement =
-                                                    withCarriedLoad(carriedLoadByMovement, ex.movement_id, it.toDoubleOrNull())
+                                                    withCarriedLoad(
+                                                        carriedLoadByMovement,
+                                                        ex.movement_id,
+                                                        it.toDoubleOrNull(),
+                                                        isWarmup = plannedSet.is_warmup,
+                                                    )
                                                 // TEMP diagnostic logging (spec 13 follow-up), see the
                                                 // matching read-side log in the LaunchedEffect above.
                                                 Log.d(
@@ -727,7 +746,12 @@ private fun SessionContent(
                                             setReps = it
                                             currentExercise?.let { ex ->
                                                 carriedRepsByMovement =
-                                                    withCarriedReps(carriedRepsByMovement, ex.movement_id, it.toIntOrNull())
+                                                    withCarriedReps(
+                                                        carriedRepsByMovement,
+                                                        ex.movement_id,
+                                                        it.toIntOrNull(),
+                                                        isWarmup = plannedSet.is_warmup,
+                                                    )
                                                 Log.d(
                                                     "CarryFwd",
                                                     "REPS WRITE cursor=$currentPlannedSetId movement=${ex.movement_id} value=$it",
@@ -1835,16 +1859,17 @@ internal fun loggedActualLine(actualLoad: Double?, actualReps: Int?, tap: String
  * Effective load pre-fill for an UNLOGGED set belonging to [movementId] (fix F): the
  * carried-forward load entered on an earlier set of the SAME exercise this session (see
  * [withCarriedLoad]) if one exists and the exercise plan is flat for load, else the set's own
- * prescribed [targetLoad]. Never applied to already-logged sets — those show their real actual
- * via [loggedActualLine] instead.
+ * prescribed [targetLoad]. Never applied to warmup sets or already-logged sets — warmups keep
+ * their own prescription and logged sets show their real actual via [loggedActualLine] instead.
  */
 internal fun effectiveLoadPrefill(
     carriedLoad: Map<Int, Double>,
     movementId: Int,
     targetLoad: Double?,
     planIsFlat: Boolean,
+    isWarmup: Boolean = false,
 ): String =
-    prefillWeight(if (planIsFlat) carriedLoad[movementId] ?: targetLoad else targetLoad)
+    prefillWeight(if (planIsFlat && !isWarmup) carriedLoad[movementId] ?: targetLoad else targetLoad)
 
 /**
  * True iff every element is null-or-equal to the others -- i.e. the exercise's plan is
@@ -1864,24 +1889,36 @@ internal fun isFlatAcrossRepTargets(values: List<Pair<Int?, Int?>>): Boolean =
 /**
  * Effective reps pre-fill for an UNLOGGED set belonging to [movementId]: the carried-forward
  * reps entered on an earlier set of the SAME exercise this session if one exists and the
- * exercise plan is flat for reps, else the set's own prescribed reps target.
+ * exercise plan is flat for reps, else the set's own prescribed reps target. Never applied to
+ * warmup sets — warmups always keep their own prescription.
  */
 internal fun effectiveRepsPrefill(
     carriedReps: Map<Int, Int>,
     movementId: Int,
     plannedSet: PlannedSetOut?,
     planIsFlat: Boolean,
-): String =
-    if (planIsFlat) carriedReps[movementId]?.toString() ?: plannedSet?.let(::prefillReps) ?: ""
-    else plannedSet?.let(::prefillReps) ?: ""
+    isWarmup: Boolean = false,
+): String {
+    val target = plannedSet?.let(::prefillReps) ?: ""
+    return if (planIsFlat && !isWarmup) {
+        carriedReps[movementId]?.toString() ?: target
+    } else {
+        target
+    }
+}
 
-/** (movementId, set_index) for a planned set, used by [reconstructCarriedLoad]/[reconstructCarriedReps]
- * to resolve which movement a persisted [LoggedSetActual] belongs to and how "recent" it is. */
+/** (movementId, set_index) for a working planned set, used by
+ * [reconstructCarriedLoad]/[reconstructCarriedReps] to resolve which movement a persisted
+ * [LoggedSetActual] belongs to and how "recent" it is. */
 private data class CarryLookupEntry(val movementId: Int, val setIndex: Int)
 
 private fun carryLookup(session: SessionDetailResponse): Map<Int, CarryLookupEntry> =
     session.groups.flatMap { it.exercises }
-        .flatMap { ex -> ex.planned_sets.map { ps -> ps.id to CarryLookupEntry(ex.movement_id, ps.set_index) } }
+        .flatMap { ex ->
+            ex.planned_sets
+                .filterNot { it.is_warmup }
+                .map { ps -> ps.id to CarryLookupEntry(ex.movement_id, ps.set_index) }
+        }
         .toMap()
 
 /**
@@ -1943,17 +1980,28 @@ internal fun reconstructCarriedReps(
  * 170 after sets 1-2 were bumped to 175: each set's input pre-filled only from its own static
  * `target_load`, with no memory of what the lifter had already entered for this exercise.
  * A no-op (returns [carriedLoad] unchanged) when [newLoad] is null — clearing the input field
- * shouldn't blank out the default for sets not yet reached.
+ * shouldn't blank out the default for sets not yet reached. Also a no-op for warmups, because
+ * carry-forward is scoped to working sets only.
  */
-internal fun withCarriedLoad(carriedLoad: Map<Int, Double>, movementId: Int, newLoad: Double?): Map<Int, Double> =
-    if (newLoad == null) carriedLoad else carriedLoad + (movementId to newLoad)
+internal fun withCarriedLoad(
+    carriedLoad: Map<Int, Double>,
+    movementId: Int,
+    newLoad: Double?,
+    isWarmup: Boolean = false,
+): Map<Int, Double> =
+    if (newLoad == null || isWarmup) carriedLoad else carriedLoad + (movementId to newLoad)
 
 /**
  * Records [newReps] as the carried-forward default for [movementId]. A null parse is a no-op,
- * matching [withCarriedLoad]'s clearing behavior.
+ * matching [withCarriedLoad]'s clearing behavior. Warmups are ignored for the same reason.
  */
-internal fun withCarriedReps(carriedReps: Map<Int, Int>, movementId: Int, newReps: Int?): Map<Int, Int> =
-    if (newReps == null) carriedReps else carriedReps + (movementId to newReps)
+internal fun withCarriedReps(
+    carriedReps: Map<Int, Int>,
+    movementId: Int,
+    newReps: Int?,
+    isWarmup: Boolean = false,
+): Map<Int, Int> =
+    if (newReps == null || isWarmup) carriedReps else carriedReps + (movementId to newReps)
 
 /**
  * Shoe-swap cue decision for a group boundary: the shoe to swap TO (rendered as a
