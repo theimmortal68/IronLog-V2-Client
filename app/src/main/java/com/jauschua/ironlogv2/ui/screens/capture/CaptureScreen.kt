@@ -1802,6 +1802,7 @@ internal fun loadDisplayLabel(value: Double, unitHint: String?): String {
     val suffix = when (unitHint) {
         UNIT_ASSIST_DEGREES, UNIT_ASSIST -> "°"
         UNIT_ASSIST_BANDS -> " bands"
+        UNIT_ASSIST_LB -> " lb assist"
         UNIT_ASSIST_REPS -> " reps"
         else -> "lb"
     }
