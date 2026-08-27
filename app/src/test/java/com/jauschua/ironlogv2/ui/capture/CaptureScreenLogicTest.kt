@@ -506,9 +506,12 @@ class CaptureScreenLogicTest {
     }
 
     @Test
-    fun loadDisplayLabel_uses_degrees_for_assist_unit_hint() {
+    fun loadDisplayLabel_uses_assist_suffixes_for_assist_unit_hints() {
         assertEquals("25°", loadDisplayLabel(25.0, "assist"))
-        assertEquals("12.5°", loadDisplayLabel(12.5, "assist"))
+        assertEquals("12.5°", loadDisplayLabel(12.5, "assist_degrees"))
+        assertEquals("3 bands", loadDisplayLabel(3.0, "assist_bands"))
+        assertEquals("40 lb assist", loadDisplayLabel(40.0, "assist_lb"))
+        assertEquals("8 reps", loadDisplayLabel(8.0, "assist_reps"))
     }
 
     @Test
