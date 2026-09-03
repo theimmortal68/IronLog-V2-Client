@@ -33,6 +33,10 @@ import kotlinx.serialization.json.JsonObject
     val target_plates: Double? = null, val band_pair_id: Int? = null, val target_felt_peak: Double? = null,
     val band_config: List<Int>? = null,
 )
+@Serializable data class PlannedSetOrderEntry(
+    val exercise_id: Int, val movement_id: Int,
+    val planned_set_id: Int, val set_index: Int,
+)
 @Serializable data class ExerciseOut(
     val id: Int, val movement_id: Int, val movement_name: String, val order_index: Int,
     val scheme: String, val objective: String, val planned_sets: List<PlannedSetOut>,
@@ -43,6 +47,7 @@ import kotlinx.serialization.json.JsonObject
     val id: Int, val order_index: Int, val group_type: String, val rounds: Int,
     val rest_seconds: Int? = null, val label: String? = null, val exercises: List<ExerciseOut>,
     val shoe: String? = null,
+    val planned_set_order: List<PlannedSetOrderEntry> = emptyList(),
 )
 @Serializable data class FinisherOut(
     val exercise_name: String,

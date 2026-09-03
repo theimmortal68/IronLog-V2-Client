@@ -40,19 +40,23 @@ private val TAP_REQUIRED = setOf("WORKING", "TOP", "BACKOFF")
  * exercise 1's sets before exercise 2's) produced the wrong logging order for supersets.
  *
  * STRAIGHT groups are unchanged: exercise-major (`g.exercises.flatMap { it.planned_sets }`).
+ * ALT_PAIR groups use the server's authoritative `planned_set_order` when present, with an
+ * exercise-major fallback for older server responses that omit it.
  *
  * `PlannedSetOut.id` (globally unique) is the cursor key everywhere downstream — this function
- * only reorders entries, it never renumbers or drops non-round-major sets except via
- * [List.getOrNull] when an exercise has fewer planned sets than `g.rounds` (defensive; should
- * not occur for a well-formed giant set, where all exercises share the same round count).
+ * only reorders entries, it never renumbers. It defensively skips missing GIANT_SET round slots
+ * via [List.getOrNull] and unresolved ALT_PAIR ids via `planned_set_order` lookup.
  */
 internal fun flattenPrescription(groups: List<GroupOut>): List<PlannedSetOut> = groups.flatMap { g ->
-    if (g.group_type == "GIANT_SET") {
-        (0 until g.rounds).flatMap { r ->
+    when {
+        g.group_type == "GIANT_SET" -> (0 until g.rounds).flatMap { r ->
             g.exercises.mapNotNull { e -> e.planned_sets.getOrNull(r) }
         }
-    } else {
-        g.exercises.flatMap { e -> e.planned_sets } // STRAIGHT: exercise-major
+        g.group_type == "ALT_PAIR" && g.planned_set_order.isNotEmpty() -> {
+            val byId = g.exercises.flatMap { it.planned_sets }.associateBy { it.id }
+            g.planned_set_order.mapNotNull { entry -> byId[entry.planned_set_id] }
+        }
+        else -> g.exercises.flatMap { e -> e.planned_sets } // STRAIGHT (and ALT_PAIR fallback): exercise-major
     }
 }
 

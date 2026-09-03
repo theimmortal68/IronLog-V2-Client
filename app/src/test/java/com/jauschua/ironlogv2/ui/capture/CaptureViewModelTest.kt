@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.jauschua.ironlogv2.data.api.ApiClient
 import com.jauschua.ironlogv2.data.api.dto.ExerciseOut
 import com.jauschua.ironlogv2.data.api.dto.GroupOut
+import com.jauschua.ironlogv2.data.api.dto.PlannedSetOrderEntry
 import com.jauschua.ironlogv2.data.api.dto.PlannedSetOut
 import com.jauschua.ironlogv2.data.local.CaptureDao
 import com.jauschua.ironlogv2.data.local.CaptureDatabase
@@ -406,6 +407,64 @@ class CaptureViewModelTest {
         val e2 = exercise(id = 2, idBase = 20, rounds = 2)
         val group = GroupOut(
             id = 1, order_index = 0, group_type = "STRAIGHT", rounds = 1,
+            exercises = listOf(e1, e2),
+        )
+        val flat = flattenPrescription(listOf(group))
+        assertEquals(listOf(10, 11, 20, 21), flat.map { it.id })
+    }
+
+    /**
+     * ALT_PAIR group honors the server's planned_set_order (warmups across the
+     * pair first, then round-robin working sets) instead of exercise-major
+     * flattening.
+     */
+    @Test
+    fun alt_pair_group_flattens_by_planned_set_order() {
+        // Exercise B (rows) is exercises[0] — no warmups, 2 working sets.
+        val exB = ExerciseOut(
+            id = 1, movement_id = 1, movement_name = "rows", order_index = 0,
+            scheme = "ALT_PAIR", objective = "", unilateral = false,
+            planned_sets = listOf(
+                PlannedSetOut(id = 10, set_index = 0, set_role = "WORKING", is_warmup = false),
+                PlannedSetOut(id = 11, set_index = 1, set_role = "WORKING", is_warmup = false),
+            ),
+        )
+        // Exercise A (bench) is exercises[1] — 3 ramp warmups, 2 working sets.
+        val exA = ExerciseOut(
+            id = 2, movement_id = 2, movement_name = "bench", order_index = 1,
+            scheme = "ALT_PAIR", objective = "", unilateral = false,
+            planned_sets = listOf(
+                PlannedSetOut(id = 20, set_index = -3, set_role = "RAMP", is_warmup = true),
+                PlannedSetOut(id = 21, set_index = -2, set_role = "RAMP", is_warmup = true),
+                PlannedSetOut(id = 22, set_index = -1, set_role = "RAMP", is_warmup = true),
+                PlannedSetOut(id = 23, set_index = 0, set_role = "WORKING", is_warmup = false),
+                PlannedSetOut(id = 24, set_index = 1, set_role = "WORKING", is_warmup = false),
+            ),
+        )
+        val order = listOf(
+            PlannedSetOrderEntry(exercise_id = 2, movement_id = 2, planned_set_id = 20, set_index = -3),
+            PlannedSetOrderEntry(exercise_id = 2, movement_id = 2, planned_set_id = 21, set_index = -2),
+            PlannedSetOrderEntry(exercise_id = 2, movement_id = 2, planned_set_id = 22, set_index = -1),
+            PlannedSetOrderEntry(exercise_id = 1, movement_id = 1, planned_set_id = 10, set_index = 0),
+            PlannedSetOrderEntry(exercise_id = 2, movement_id = 2, planned_set_id = 23, set_index = 0),
+            PlannedSetOrderEntry(exercise_id = 1, movement_id = 1, planned_set_id = 11, set_index = 1),
+            PlannedSetOrderEntry(exercise_id = 2, movement_id = 2, planned_set_id = 24, set_index = 1),
+        )
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "ALT_PAIR", rounds = 1,
+            exercises = listOf(exB, exA), planned_set_order = order,
+        )
+        val flat = flattenPrescription(listOf(group))
+        assertEquals(listOf(20, 21, 22, 10, 23, 11, 24), flat.map { it.id })
+    }
+
+    /** Empty planned_set_order (server skew) degrades to exercise-major, not a crash. */
+    @Test
+    fun alt_pair_group_without_planned_set_order_falls_back_to_exercise_major() {
+        val e1 = exercise(id = 1, idBase = 10, rounds = 2)
+        val e2 = exercise(id = 2, idBase = 20, rounds = 2)
+        val group = GroupOut(
+            id = 1, order_index = 0, group_type = "ALT_PAIR", rounds = 1,
             exercises = listOf(e1, e2),
         )
         val flat = flattenPrescription(listOf(group))
