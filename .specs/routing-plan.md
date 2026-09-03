@@ -1,162 +1,122 @@
 ## Routing Plan
-Generated: 2026-07-11
+Generated: 2026-08-12
 
-- .specs/01-autoregulated-background-rest-timer.md → gemini, worktree wt-01, depends on: none. Broader cross-module surface (RestTimer.kt, CaptureViewModel.kt, new RestTimerService.kt, AndroidManifest.xml, CaptureScreen.kt, RestAudio.kt, 2+ test files — 7+ files touched, new foreground-service infrastructure introduced from scratch): gemini per "broad cross-module" guidance.
+- `.specs/01-giant-set-round-major-rendering.md` → gemini, worktree wt-01, depends on: none. Real logic restructuring (round-major card sequencing) in an interactive screen with a lot of state to preserve exactly (HT reconfigure cues, carry-forward, unilateral handling, edit mode) — broad/cross-cutting within the file, not a bounded 1-3 file mechanical edit, so gemini per "Choosing a provider for generation." No schema/API change, no Forbidden-list hit — client-only UI fix, server contract untouched.
 
-Delegation ratio: 1/1 → gemini (100%)
+Delegation ratio: 1/1 (100%)
 Merge order: wt-01 standalone.
 
 Notes:
-- Combines build-plan items G (autoregulated rest) and D+E (background rest timer) — they're one feature client-side, not two (G's "hardest set governs duration" logic lives inside the same rest-timer path D+E's foreground service wraps).
-- No server/DTO changes required — 100% client-side, standalone from IronLog-V2 (server) work.
-- No existing foreground-service precedent in this repo — this introduces manifest permissions (`POST_NOTIFICATIONS`, `FOREGROUND_SERVICE` + type-specific permission) for the first time; review should pay particular attention to graceful degradation if `POST_NOTIFICATIONS` is denied (rest timing must still work in-app, not crash or silently break).
-- No forbidden-boundary hits expected (no dependency upgrades, no build-logic changes beyond the manifest's own permission/service declarations, which are additive not structural) — confirm at `/verify-plan` regardless, don't assume.
-- ~~H ("AI acts on programming notes")~~ — brainstorming session completed 2026-07-12; see the 2026-07-12 addendum below for the resulting client spec.
+- **Opus review mandatory, not exempt** — this touches the live logging screen's set-recording flow (`vm.logWorkingSet`, `vm.editLoggedSet`) for a giant-set day; a subtle reordering bug here could misattribute a logged set to the wrong exercise/movement_id, corrupting real training data. Non-trivial logic, not additive/mechanical.
+- No HUMAN GATE — pure client-side rendering fix, no auth/schema/API-surface change.
+- Deploy: build APK (`./gradlew :app:assembleDebug`) + `adb install -r` to the athlete's phone once merged — Class 3 (client install) per the project-ops CLAUDE.md Deploy Gate, athlete installs when convenient (user already explicitly requested this fix and the install).
 
-## 2026-07-11 addendum: finisher + warmup rendering
+## 2026-08-26 batch: carry-forward warmup boundary fix
 
-- ~~.specs/07-render-session-finisher.md~~ — MERGED + LIVE 2026-07-12 (codex-generated, Tier A committed after codex exited uncommitted). Pure client-side additive render.
-- ~~.specs/08-render-session-warmup.md~~ — MERGED + LIVE 2026-07-12 (codex-generated, Tier A committed after codex exited uncommitted). Depended on server spec 11, dispatched only after confirmed live.
+Athlete-reported live during today's D2 (Lower A) session: logging warmup set 1's
+weight bled into warmup set 2, then set 3, then the first working set — chain-carried
+across a boundary carry-forward was never supposed to cross. Root-caused by Tier A
+before speccing (see spec 40): `effectiveLoadPrefill`/`effectiveRepsPrefill` apply the
+working-set-only `planIsFlat` gate to ANY current set including warmups, and
+`withCarriedLoad`/`withCarriedReps` write into the movement-keyed carry map with no
+`is_warmup` check on either the read or write side. Dispatch withheld — hold for
+explicit go-ahead once the athlete's workout is done (standing instruction this batch).
 
-Notes:
-- Both are pure display additions (no logging/submit-flow interaction) — same "informational block" pattern, placed at opposite ends of the Capture screen's LazyColumn (warmup first, finisher last).
-- `params`/item dicts are heterogeneous per exercise/drill — both specs use `kotlinx.serialization.json.JsonObject` rather than forcing a rigid shape.
-
-## 2026-07-12 addendum: side-aware unilateral edit
-
-- .specs/09-side-aware-unilateral-edit.md → codex, worktree wt-09, depends on: none. Touches CaptureDao/CaptureRepo/CaptureViewModel/CaptureScreen (4 files, real logic — key-shape change from `Int` to `Pair<Int,Int>` for the logged-actuals map, editLoggedSet gains a sideIndex param, per-side card rendering). Not decomposed further: the data-flow is one connected thread (DAO query → repo → viewmodel state → screen rendering) that would just produce constant merge conflicts if split into separate worktrees — matches CLAUDE.md's "run as one sequential worktree" guidance for tightly-coupled work.
-
-Delegation ratio: 1/1 → codex (100%)
-Merge order: wt-09 standalone.
-
-Notes:
-- Real logic change (not mechanical) touching an existing safety-net refusal — routed through Opus review, not review-exempt.
-- Bilateral sets (the common case) must see zero behavior change; the spec calls this out explicitly as a required regression check.
-
-## 2026-07-12 addendum: "H" apply-wizard resolved proposals (post-brainstorming)
-
-- .specs/10-apply-wizard-resolved-proposals.md → codex, worktree wt-10, depends on: `IronLog-V2/.specs/17-notes-review-resolved-proposals.md` merged + live (server `resolved_proposals` field doesn't exist yet). **Do not dispatch until confirmed live via a real curl against `/notes/review`.**
-
-Delegation ratio: 1/1 → codex (100%)
-Merge order: wt-10, after the full server batch (13→14→15→16→17) is live.
-
-Notes:
-- Pre-fills the existing `ApplyWizardDialog` from server-resolved proposals; `defaultSourceSlot`'s client-side heuristic stays as the fallback for when the server finds nothing — this spec does not delete it.
-- A `valid=false` proposal must never be silently pre-selected as if safe — this is the client-side half of the resolver's core safety property (spec 16, server-side) and should get the same scrutiny at review.
-
-## 2026-07-14 addendum: jump-rope warmup + finisher interval timers
-
-- ~~.specs/14-interval-timer-service.md~~ → gemini, worktree wt-14 — MERGED + LIVE 2026-07-14 (097c4bb). New standalone `IntervalTimerService`/`IntervalTimerController` file + manifest entry + tests, no UI wiring. Opus review: no Critical/High; one Medium + two Low folded into a same-branch fix-up commit, re-verified green.
-- ~~.specs/15-interval-timer-ui-wiring.md~~ → codex, worktree wt-15 — MERGED + LIVE 2026-07-14 (ad95508), depended on wt-14 merged. Bounded UI wiring (CaptureScreen.kt, CaptureViewModel.kt, test file). Opus review (2 passes): no Critical/High either pass; one Medium test-gap + one Low folded into a fix-up commit; two cosmetic Lows explicitly dismissed by Tier A (logged in the fix-up commit message).
-
-Delegation ratio: 2/2 (100%)
-Merge order: wt-14 → wt-15
-
-## 2026-07-15 addendum: Capture screen vertical density
-
-- ~~.specs/16-capture-screen-vertical-density.md~~ → codex, worktree wt-16 — MERGED + LIVE 2026-07-15 (63ebfe8). Single-file (CaptureScreen.kt) padding/spacing/line-merging pass. Opus review: no Critical/High/Medium; three Low notes accepted as-is (RPE line merge is an intentional density trade-off, not an oversight). Note "spec 16" here is this repo's client spec 16 and is unrelated to IronLog-V2 server's own spec 16 (note-resolver) referenced above — same number, different repo, different specs.
+- `.specs/40-carry-forward-warmup-boundary-fix.md` → codex, worktree wt-40, depends on:
+  none. Bounded single-file fix (`CaptureScreen.kt` + its test file) — codex per
+  "Choosing a provider for generation" (opencode retired, all codegen → codex/gemini
+  per 2026-07-09 directive).
 
 Delegation ratio: 1/1 (100%)
-Merge order: wt-16 standalone.
-
-## 2026-07-15 addendum: vertical density, remaining 9 screens (parallel batch)
-
-Same density formula as spec 16, applied per-screen. All 9 specs are file-disjoint (each touches exactly one file, no two specs share a file) — genuinely parallel-safe, dispatched concurrently, merged serially with build/test before each merge.
-
-- ~~.specs/17-today-screen-vertical-density.md~~ → codex, worktree wt-17 — MERGED + LIVE 2026-07-15 (04c04fd). `today/TodayScreen.kt`.
-- ~~.specs/18-autoregulate-screen-vertical-density.md~~ → codex, worktree wt-18 — MERGED + LIVE 2026-07-15 (47fe5ad). `autoregulate/AutoregulateScreen.kt`.
-- ~~.specs/19-history-screen-vertical-density.md~~ → codex, worktree wt-19 — MERGED + LIVE 2026-07-15 (62c17b3). `history/HistoryScreen.kt`.
-- ~~.specs/20-history-detail-screen-vertical-density.md~~ → codex, worktree wt-20 — MERGED + LIVE 2026-07-15 (eb2a938). `history/HistoryDetailScreen.kt`.
-- ~~.specs/21-movements-list-screen-vertical-density.md~~ → codex, worktree wt-21 — MERGED + LIVE 2026-07-15 (c669cc7). `movements/MovementsListScreen.kt`.
-- ~~.specs/22-movement-detail-screen-vertical-density.md~~ → codex, worktree wt-22 — MERGED + LIVE 2026-07-15 (c24e024). `movement_detail/MovementDetailScreen.kt` — highest-impact of the batch (merges every `Field` row's label+value from 2 lines to 1, ~20 fields on this screen).
-- ~~.specs/23-bands-screen-vertical-density.md~~ → codex, worktree wt-23 — MERGED + LIVE 2026-07-15 (cd36073). `bands/BandsScreen.kt`.
-- ~~.specs/24-group-review-sheet-vertical-density.md~~ → codex, worktree wt-24 — MERGED + LIVE 2026-07-15 (5333d1f). `capture/GroupReviewSheet.kt` — same `capture` package as spec 16 but a different, standalone file; no overlap.
-- ~~.specs/25-wizard-screen-vertical-density.md~~ → codex, worktree wt-25 — MERGED + LIVE 2026-07-15 (ae47b86). `wizard/WizardScreen.kt`.
-
-Delegation ratio: 9/9 (100%)
-Merge order: wt-17 → wt-18 → wt-19 → wt-20 → wt-21 → wt-22 → wt-23 → wt-24 → wt-25, all merged, build/tests green throughout. All 9 review-exempt (mechanical padding/spacing + one already-reviewed-pattern AnnotatedString restructure), routing reason logged in each merge/feat commit rather than running 9 near-identical Opus reviews.
+Merge order: wt-40 standalone.
 
 Notes:
-- Standalone from `RestTimerService`/`RestTimer.kt`/`RestAudio.kt` — neither spec modifies those files, both explicitly forbid it and instead reuse specific `internal fun`s and the `RestToneCue` class.
-- No server/DTO changes required — all data (warmup item `seconds`, finisher `duration_minutes`/`target_reps_per_minute`/`work_seconds_per_minute`) already ships in the session response.
-- New foreground-service manifest entry (second `<service>`, own channel id) — additive, mirrors the already-approved rest-timer service pattern from the 2026-07-11 addendum; confirm at `/verify-plan` it doesn't trip a forbidden-boundary hit regardless.
+- **NOT YET DISPATCHED** — user directive: spec now, implement only once told the
+  workout is finished. Do not create the worktree or call `consensus_delegate` until
+  that go-ahead arrives.
+- Opus review: route through — this touches the live capture screen's prefill logic
+  for a lift the athlete trains today; a wrong fix could silently reintroduce the bug
+  in a different shape (e.g. breaking legitimate working-set carry-forward instead of
+  just excluding warmups). Non-trivial logic, not additive/mechanical.
+- No HUMAN GATE — pure client-side logic fix, no auth/schema/API-surface change.
+- Deploy: build APK + `adb install -r` once merged — Class 3 (client install) per the
+  Deploy Gate — install timing is the athlete's call, not urgent same-day.
 
-## 2026-07-15 addendum: ReviewScreen.kt (missed from the 9-screen batch)
+## 2026-08-26 batch (cont'd): assist_lb display falls through to plain "lb"
 
-User caught this: `ReviewScreen.kt` (653 lines — pending-change-proposals / apply-wizard screen, reachable from Today's "Review" action) was never enumerated into specs 17-25's screen list. Confirmed via `grep -rl "Scaffold(" ...` across the whole `ui/` tree that every other Composable-bearing file (`MainActivity.kt` — nav shell only, no dense content; `ErrorRetryBox.kt` — centered non-scrolling error view; `theme/Theme.kt` — no UI) is now accounted for; `ReviewScreen.kt` was the only real gap.
+Athlete-reported live during today's D2 (Lower A) session: Nordic Curl Max [Ares]
+(band-assisted, correctly configured server-side) shows its per-set value as plain
+"lb" during logging, same as a real weight-loaded lift, so it reads as "using weight"
+instead of band assistance. Root-caused by Tier A before speccing (see spec 41):
+`loadDisplayLabel` in `CaptureScreen.kt` has suffix cases for `assist_degrees`,
+`assist_bands`, `assist_reps` but never got one for `assist_lb` — it falls through to
+the bare `"lb"` else-branch. `loadInputLabel` (the input field's own label) already
+handles `assist_lb` correctly ("Assist (lb)") — only the value-display function is
+missing the case. Dips [TOWER + TUBES] uses the same `CABLE_LB` unit and is affected
+identically. Dispatch withheld — hold for explicit go-ahead once the athlete's workout
+is done (standing instruction this batch).
 
-- ~~.specs/26-review-screen-vertical-density.md~~ → codex, worktree wt-26 — MERGED + LIVE 2026-07-15 (7ccc452). `review/ReviewScreen.kt` only (does not touch `ReviewLogic.kt`/`ReviewViewModel.kt` in the same package). Review-exempt, same formula as specs 16-25.
+- `.specs/41-assist-lb-display-missing-suffix.md` → codex, worktree wt-41, depends on:
+  **40 merged** (corrected 2026-08-26 via `/verify-plan`: both specs list
+  `CaptureScreen.kt` as a file target, which is an automatic FAIL on the mechanical
+  literal-overlap check for a "parallel" pair, even though the two specs touch
+  non-overlapping functions — spec 40's targets are `effectiveLoadPrefill`/
+  `effectiveRepsPrefill`/`withCarriedLoad`/the carry-map state/`reconstructCarriedLoad`/
+  `reconstructCarriedReps` (~lines 208-289, 1841-1949); spec 41 touches only
+  `loadDisplayLabel` (~line 1777), earlier in the file and unreferenced by spec 40's
+  targets. No semantic collision, but same-file concurrent worktrees are an avoidable
+  risk for zero benefit here — sequenced instead of dispatched-parallel-then-rebased).
+  Bounded single-function fix + test — codex per "Choosing a provider for generation."
 
 Delegation ratio: 1/1 (100%)
-Merge order: wt-26 standalone.
-
-## 2026-07-15 addendum: correction pass — the padding-only formula wasn't enough
-
-Athlete feedback after installing specs 17-26: on-device it read as no visible change. Root cause: specs 19/21/23 (History/Movements/Bands) only trimmed padding/spacer dp values and left every `MaterialTheme.typography.*` token and every "optional" line-merge untouched — the actual dominant driver of row height (2-3 full text lines) never shrank. The original brainstorming conversation had approved "all of the above — be aggressive" including shrinking text sizes; that lever was dropped unilaterally when writing spec 21 ("do not change any typography token") without surfacing the narrowing back to the athlete.
-
-- .specs/27-movements-bands-history-density-followup.md → codex, worktree wt-27, depends on: none (spec 27 supersedes/extends specs 19/21/23's work in the same three files). Steps a typography token down one level on the dominant secondary lines + forces the previously-optional subtitle/floor-cap merge in `MovementsListScreen.kt` (the clearest visible offender in the athlete's screenshot).
-
-Delegation ratio: 1/1 (100%)
-Merge order: wt-27 standalone.
-
-## 2026-07-16 addendum: jump-rope lead-in countdown
-
-- ~~.specs/28-jumprope-lead-in-countdown.md~~ → codex, worktree wt-28 — MERGED + LIVE 2026-07-16 (9e100c6). Adds an optional 5s "Get Ready" lead-in phase to `IntervalTimerService`'s single-countdown mode + wires the jump-rope Start call site. Opus review: no Critical/High/Medium findings.
-
-Delegation ratio: 1/1 (100%)
-Merge order: wt-28 standalone.
-
-## 2026-07-16 addendum: extend lead-in to finisher timers
-
-- ~~.specs/29-finisher-lead-in-countdown.md~~ → codex, worktree wt-29 — MERGED + LIVE 2026-07-16 (68c6395), depended on spec 28 merged (reused its `isLeadInPhase`/`COUNTDOWN_LEAD_IN_LABEL` mechanism for `RepBased`/`TimeBased`). Opus review: zero Critical/High/Medium findings.
-
-Delegation ratio: 1/1 (100%)
-Merge order: wt-29 standalone.
-
-## 2026-07-21 batch: cardio-log client follow-on (server shipped 2026-07-21, docs/superpowers/specs (server repo) 2026-07-20-cardio-interval-day-design.md)
-
-Client-side surface for the standalone cardio/interval day-type: logging a Z2 session (walk/treadmill), a weekly rollup on Today, and a simple history list. Verified live endpoint shapes via `curl` against production before writing these specs (`GET /cardio-log` → `[]`, `GET /cardio-log/weekly-summary` → `{"count":0,"target":2,"week_start":"2026-07-20"}`), matching this session's established pattern for client follow-ons on server-first features.
-
-- ~~.specs/31-cardio-log-data-layer.md~~ → codex, worktree wt-31 — MERGED + LIVE 2026-07-21 (95de284). DTOs (`CardioModels.kt`) + `CardioLogRepo` + `AppContainer` wiring. Review-exempt (thin DTOs/repo, no branching logic, mirrors `NotesRepo`'s established pattern). Compile + tests clean, zero regressions.
-- ~~.specs/32-cardio-log-entry-screen.md~~ → codex, worktree wt-32 — MERGED + LIVE 2026-07-21 (291bc51). Log-entry form + ViewModel + registers `Routes.CARDIO_LOG`. **Opus review**: no Critical/High. Two Low notes, not fixed: (1) toggling Treadmill→Walk before submit still sends any already-entered `incline_pct`/`backward_walk_done` alongside `modality="WALK"` — a spec gap (didn't address submit-time gating), not a code defect, filed as a future follow-up; (2) non-numeric optional fields (e.g. `avg_hr="132x"`) silently map to `null` rather than surfacing a validation error — acceptable for a simple log. 6/6 new tests passing (95 total).
-- ~~.specs/33-today-cardio-rollup.md~~ → codex, worktree wt-33 — MERGED + LIVE 2026-07-21 (fa9ed4a). Today-screen "🏃 Cardio: N/2 this week" rollup line, tappable → `Routes.CARDIO_LOG`. Review-exempt (thin ViewModel wiring + a rendering condition, mirrors the existing `reviewCount` pattern exactly — verified directly against the spec by Tier A). Known accepted limitation: rollup doesn't auto-refresh on return from the log screen, only on the next natural `load()`. Zero regressions (252 tests).
-- ~~.specs/34-cardio-log-history-screen.md~~ → codex, worktree wt-34 — MERGED + LIVE 2026-07-21 (6676e7e). History list screen + `Routes.CARDIO_HISTORY`; adds a "History" top-bar button to `CardioLogScreen.kt`. Review-exempt (mirrors `HistoryScreen`/`HistoryViewModel` exactly, no novel logic). Zero regressions (252 tests).
-
-**All 4 specs in this batch are MERGED and LIVE as of 2026-07-21 (main @ e365693, 252 tests passing). The standalone cardio/interval day-type feature is now fully end-to-end — server model+endpoints (specs 44-45 in the server repo) + client data layer, log entry form, Today-screen rollup, and history list.**
-
-**Deliberately fully sequential, not parallel-then-serial-merge** — unlike most batches this session. `Nav.kt` and `MainActivity.kt` are touched by 3 of these 4 specs (32, 33, 34) to register/wire routes; running any of them concurrently would race the same nav-graph edits even though each touches a different region of the file. Per CLAUDE.md's decomposition guidance ("if you can't find a decomposition that avoids constant merge conflicts, run it as one sequential worktree"), the correct call here is sequential dispatch of 32→33→34 (each waits for the prior to merge before its OWN worktree is even created), not concurrent generation with a hoped-for clean rebase.
-
-Delegation ratio: 4/4 (100%)
-Merge order: 31 → 32 → 33 → 34 (strictly sequential — no parallel generation in this batch).
+Merge order: wt-40 first (create, generate, review, merge to main) — THEN create
+wt-41 off the now-updated main and dispatch it. Do not create wt-41 until wt-40 is
+merged; this replaces the earlier "dispatch both, rebase the second" plan.
 
 Notes:
-- No HUMAN GATE anywhere in this batch — pure client UI/data-layer work, no schema/auth/build-logic/public-API-surface changes (the server-side public surface was already finalized in specs 44-45).
-- Review routing: spec 31 (thin DTOs/repo, no branching logic) is likely review-exempt; specs 32-34 (real UI state machines + user input validation) should get at least a light Opus pass given this session's carry-forward-bug history in this exact `ui/screens/` tree — use judgment at dispatch time based on the actual diff, but default to reviewing rather than skipping for anything with non-trivial logic (spec 32's `buildCardioLogCreate` validation function especially).
-- No Room/local-DB, no interval-timer, no offline-capture needed for this feature — confirmed in spec 31's own edge-cases section.
+- **NOT YET DISPATCHED** — user directive: spec now, implement only once told the
+  workout is finished.
+- Opus review: not clearly required by the Review Gate's criteria (additive display
+  suffix, no logic restructuring) — but given wt-40 and wt-41 land in the same file the
+  same day, route both through review before either merges rather than deciding
+  in isolation; final call at dispatch time.
+- No HUMAN GATE — pure client-side display fix, no auth/schema/API-surface change.
+- Deploy: build APK + `adb install -r` once merged — Class 3 (client install) per the
+  Deploy Gate.
 
-## 2026-07-22 addendum: cardio-log form hardening (spec 32's deferred Low findings)
+## 2026-09-02 batch: ALT_PAIR (T1/T1b superset) planned_set_order fix
 
-- ~~.specs/35-cardio-log-form-hardening.md~~ → codex, worktree wt-35 — MERGED + LIVE 2026-07-22 (296d5fe). Fixes both deferred Low findings from spec 32's Opus review: (1) gates incline/backward-walk-done to TREADMILL modality at submit time; (2) non-numeric optional-field input now correctly rejects instead of silently discarding as null. Review-exempt (mechanical extension of an already-reviewed pure function). 9/9 `CardioLogScreenLogicTest` passing (up from 6), zero regressions.
+Athlete-reported: on Upper A (D1), T1/T1b (bench/rows superset) shows a rows working
+set before bench's warmup ramp instead of all of bench's 3 ramp sets first, then
+alternating working sets. Root-caused by Tier A before speccing (see spec 21): server
+already computes correct order and exposes it as `GroupOut.planned_set_order` for
+ALT_PAIR groups (`ironlog/api/app.py` in IronLog-V2, ~line 1042-1073), but the client's
+`GroupOut` DTO never declares that field (silently dropped on parse), and
+`flattenPrescription` in `CaptureViewModel.kt` only special-cases `GIANT_SET`, so
+`ALT_PAIR` falls through to exercise-major flattening — same bug shape as the
+already-fixed GIANT_SET round-major issue (spec 01), just never extended to ALT_PAIR
+when spec 58's pairing feature landed server-side. Confirmed via DB: Upper A's T1/T1b
+tiers are correctly paired (`pair:1:21`, symmetric `paired_tier_id`), so this is not a
+data/config issue — purely the client's missing consumption of the field.
+
+- `.specs/21-alt-pair-planned-set-order.md` → opencode, worktree wt-21, depends on:
+  none. Bounded 3-file change (1 DTO addition, 1 function's `when` arm, 1 test file) —
+  opencode per "Choosing a provider for generation" (bounded 1-3 file work).
 
 Delegation ratio: 1/1 (100%)
-Merge order: wt-35 standalone. No HUMAN GATE (no Forbidden-list hit).
-
-## 2026-07-23 batch: Phase-1 client parity (design approved via brainstorming, docs/superpowers/specs/2026-07-23-phase1-client-parity-design.md)
-
-Four server features shipped over the past week with zero client visibility: daily readiness + phase-gate confirmation, weak-point assessment, missed-workout handling, and goal-driven phase thresholds. One combined design doc (not four separate brainstorming cycles) since all four share the identical shape already established this session (Today-rollup StateFlow + a repo mirroring CardioLogRepo + a detail screen pushed from Today).
-
-- ~~.specs/36-readiness-checkin-phase-gate.md~~ → codex, worktree wt-36 — MERGED + LIVE 2026-07-23 (912c9cc, fix 6796f8f). New `ReadinessRepo`/DTOs, a check-in card on Today, a phase-transition-confirmation banner driven by `SubmitResponse.phase_transition_available` (a field the client's own DTO never declared until now, silently dropped by the JSON deserializer). Touches `CaptureViewModel.kt` (new constructor param, both production factories wired) in addition to `TodayViewModel.kt`/`AppContainer.kt`. **Opus review**: no Critical/High. Two Mediums found and fixed: (M2) `confirmPhaseTransition()` only cleared its flows in `.onSuccess`, so a double-tap during the network round-trip fired two production `POST /engine-state/confirm-phase` calls — fixed with an optimistic clear before launch; (M1) the null-overwrite-protection branch (a no-transition submit must not clear an already-pending one) had no regression test — added. Three Lows noted, not fixed (a flow-clearing test gap, silent confirm/check-in failures matching this app's established best-effort convention, partial-upsert correctness implicitly depending on `ApiClient`'s `explicitNulls = false`). 259/259 tests passing after the fix.
-- ~~.specs/37-weak-points-display.md~~ → codex, worktree wt-37 — MERGED + LIVE 2026-07-23 (42fee4e). New `WeakPointsRepo`/DTOs, Today rollup badge (shown only when any muscle group has `weak_count > 0`), muscle-group-grouped detail screen with `stalled`/`lagging` tags. Review-exempt: mirrors the already-reviewed `CardioLogRepo`/`CardioHistoryScreen` pattern exactly, no cross-screen state bridge or invariant-touching logic; Tier A read the full diff and worker-invented tests directly. 266/266 tests passing.
-- ~~.specs/38-missed-days-display.md~~ → codex, worktree wt-38 — MERGED + LIVE 2026-07-23 (65c7f26). New `MissedDaysRepo`/DTOs, Today rollup badge, detail screen with acknowledge/reschedule actions (full parity with the server's write endpoints, per the user's choice — not display-only; in-place record update by id, no re-fetch; write failures surface a visible error, unlike the best-effort background rollups). Review-exempt (same reasoning as spec 37 — Tier A verified the diff and its real `MockEngine` integration tests directly). One genuine compile error caught by the build gate before commit (a Ktor `MockRequestHandleScope` extension-receiver mistake in the new test file, introduced by the worker) — fixed via a targeted re-delegation, not a Tier A direct edit. 272/272 tests passing after the fix.
-- ~~.specs/39-goals-settings-screen.md~~ → codex, worktree wt-39 — MERGED + LIVE 2026-07-23 (final merge). New `GoalsRepo`/DTOs, a new 7th bottom-nav tab ("Settings") housing a Goals view/edit form, handling both the no-goal-configured (`GET /goals` → bare `null`) and existing-goal states. `buildGoalSettingsUpdate` mirrors spec 35's blank-vs-non-numeric-vs-valid validation pattern exactly. Both open questions flagged in the spec were resolved BEFORE dispatch, not discovered mid-implementation: the partial-upsert null-vs-omitted-field limitation was investigated (server's `exclude_unset=True` + client's app-wide `explicitNulls=false` means a blanked optional field can't currently be cleared server-side — documented as an accepted, out-of-scope limitation) and Ktor's bare-`null`-body deserialization was confirmed via a real `MockEngine` test the worker wrote. Review-exempt (same reasoning as 37/38). 278/278 tests passing.
-
-**All 4 specs in this batch are MERGED and LIVE as of 2026-07-23. Phase-1 client parity is complete** — every server feature that had shipped with zero client visibility (readiness/phase-gate, weak-points, missed-days, goals) now has a real in-app surface. A fresh debug APK including all four was built and delivered to the user.
-
-Delegation ratio: 4/4 (100%)
-Merge order: 36 → 37 → 38 → 39 — strictly sequential, not parallel-then-serial-merge, exactly as planned. All four touch `TodayViewModel.kt`/`TodayScreen.kt`/`AppContainer.kt` for their own rollup/route wiring (36 additionally touched `CaptureViewModel.kt`/`CaptureModels.kt`; 39 additionally touched `MainActivity.kt`'s `TABS` list) — no data dependency between the four features themselves, but concurrent generation would have raced the same shared files, mirroring this repo's own established call on the cardio-log batch (31→32→33→34, sequential for the identical reason).
+Merge order: wt-21 standalone.
 
 Notes:
-- No HUMAN GATE anywhere in this batch — pure client UI/data-layer work, no schema/auth/build-logic/public-API-surface changes (all four server-side surfaces were already finalized and live before this batch started).
-- Review routing played out as planned: spec 36 (cross-screen state bridge + `CaptureViewModel` constructor change) got the mandatory Opus review and it found two real, fixed Mediums; specs 37/38/39 were classified review-exempt after Tier A read every line of each diff and its tests directly, consistent with the cardio-log batch's own precedent.
-- **Recurring pattern, now the 3rd occurrence in this same session (specs 36, 38, and effectively re-confirmed at 37/39)**: every one of these four dispatches reported a consensus-mcp-layer timeout while the underlying `codex exec` process was still alive and working correctly — the timeout playbook (find the live PID, poll for natural exit, never re-dispatch into a live worktree) was followed every time and never needed a real retry.
-- **Spec 38 surfaced a new failure mode worth remembering**: a worker's own test file had a genuine Kotlin compile error (calling a `MockRequestHandleScope` extension function from outside that receiver's scope) that the worker's own local verification apparently didn't catch before exiting uncommitted. Caught by Tier A's mandatory build/test gate before any commit happened, fixed via a second, narrowly-scoped re-delegation to the same worker — the build gate did exactly the job it exists for.
+- Opus/Fable review: route through — this touches the live capture screen's set
+  sequencing (`flattenPrescription`, which drives `flattenedPrescription` and the
+  cursor logic used to advance through real logged sets); a wrong fix could silently
+  misorder or drop sets during an actual workout. Non-trivial logic, not
+  additive/mechanical, despite the small diff size.
+- No HUMAN GATE — pure client-side fix consuming an already-shipped, already-correct
+  server field; no auth/schema/API-surface change (server untouched, out of scope per
+  spec 21's constraints).
+- Deploy: build APK (`./gradlew :app:assembleDebug`) + `adb install -r` once merged —
+  Class 3 (client install) per the Deploy Gate. User is mid-session on this exact bug
+  (asked "right now" during today's Upper workout) — flag for prompt install once
+  merged rather than routine timing, but confirm with user before pushing to their
+  phone if they're still using the app.
